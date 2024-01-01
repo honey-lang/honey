@@ -10,12 +10,12 @@ const Self = @This();
 const ValueStore = utils.Store(Value);
 
 pub const Environment = struct {
-    store: ValueStore,
+    _store: ValueStore,
     parent: ?*Environment = null,
 
     /// Initializes an environment without a parent.
     pub fn init(ally: std.mem.Allocator) Environment {
-        return .{ .globals = ValueStore.init(ally) };
+        return .{ ._store = ValueStore.init(ally) };
     }
 
     /// Initializes an environment with a parent.
@@ -27,12 +27,12 @@ pub const Environment = struct {
 
     /// Checks if a value exists in the environment.
     pub fn exists(self: *Environment, name: []const u8) bool {
-        return self.store.contains(name);
+        return self._store.contains(name);
     }
 
     /// Checks if a value exists in the environment or its parent.
     pub fn existsInAnyScope(self: *Environment, name: []const u8) bool {
-        if (self.store.contains(name)) {
+        if (self._store.contains(name)) {
             return true;
         } else if (self.parent) |parent| {
             return parent.existsInAnyScope(name);
@@ -42,8 +42,8 @@ pub const Environment = struct {
 
     /// Loads a value from the environment or its parent.
     pub fn load(self: *Environment, name: []const u8) ?Value {
-        if (self.store.contains(name)) {
-            return self.store.load(name);
+        if (self._store.contains(name)) {
+            return self._store.load(name);
         } else if (self.parent) |parent| {
             return parent.load(name);
         }
@@ -52,12 +52,12 @@ pub const Environment = struct {
 
     /// Stores a value in the environment.
     pub fn store(self: *Environment, name: []const u8, value: Value) !void {
-        self.store.store(name, value) catch unreachable;
+        self._store.store(name, value) catch unreachable;
     }
 
     /// Deinitializes the environment.
     pub fn deinit(self: *Environment) void {
-        self.store.deinit();
+        self._store.deinit();
     }
 };
 

@@ -10,20 +10,22 @@ const Self = @This();
 const ValueStore = utils.Store(Value);
 
 pub const Environment = struct {
-    arena: std.heap.ArenaAllocator,
     globals: ValueStore,
     parent: ?*Environment = null,
 
+    /// Initializes an environment without a parent.
     pub fn init(ally: std.mem.Allocator) Environment {
-        return .{ .arena = std.heap.ArenaAllocator.init(ally), .globals = ValueStore.init(ally) };
+        return .{ .globals = ValueStore.init(ally) };
     }
 
+    /// Initializes an environment with a parent.
     pub fn initWithParent(ally: std.mem.Allocator, parent: *Environment) Environment {
         var self = Environment.init(ally);
         self.parent = parent;
         return self;
     }
 
+    /// Loads a value from the environment or its parent.
     pub fn load(self: *Environment, name: []const u8) ?Value {
         if (self.globals.contains(name)) {
             return self.globals.load(name);
@@ -33,13 +35,14 @@ pub const Environment = struct {
         return null;
     }
 
-    pub fn deinit(self: *Environment) void {
-        self.arena.deinit();
-        self.globals.deinit();
+    /// Stores a value in the environment.
+    pub fn store(self: *Environment, name: []const u8, value: Value) !void {
+        self.globals.store(name, value) catch unreachable;
     }
 
-    fn allocator(self: *Environment) std.mem.Allocator {
-        return self.arena.allocator();
+    /// Deinitializes the environment.
+    pub fn deinit(self: *Environment) void {
+        self.globals.deinit();
     }
 };
 

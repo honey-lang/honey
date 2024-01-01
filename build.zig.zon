@@ -1,0 +1,11 @@
+.{
+    .name = "honey",
+    .version = "0.0.1",
+    .dependencies = .{
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/cf3a4e763831dd7e0845fef4f209f5c780eda375.tar.gz",
+            .hash = "1220b641ac5ed4187f293906201ee07f98423c942bf82e28c7c75a22d700b494c177",
+        },
+    },
+    .paths = .{"."},
+}

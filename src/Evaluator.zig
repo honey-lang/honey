@@ -10,7 +10,7 @@ const Self = @This();
 const ValueStore = utils.Store(Value);
 
 pub const Environment = struct {
-    globals: ValueStore,
+    store: ValueStore,
     parent: ?*Environment = null,
 
     /// Initializes an environment without a parent.
@@ -25,10 +25,25 @@ pub const Environment = struct {
         return self;
     }
 
+    /// Checks if a value exists in the environment.
+    pub fn exists(self: *Environment, name: []const u8) bool {
+        return self.store.contains(name);
+    }
+
+    /// Checks if a value exists in the environment or its parent.
+    pub fn existsInAnyScope(self: *Environment, name: []const u8) bool {
+        if (self.store.contains(name)) {
+            return true;
+        } else if (self.parent) |parent| {
+            return parent.existsInAnyScope(name);
+        }
+        return false;
+    }
+
     /// Loads a value from the environment or its parent.
     pub fn load(self: *Environment, name: []const u8) ?Value {
-        if (self.globals.contains(name)) {
-            return self.globals.load(name);
+        if (self.store.contains(name)) {
+            return self.store.load(name);
         } else if (self.parent) |parent| {
             return parent.load(name);
         }
@@ -37,12 +52,12 @@ pub const Environment = struct {
 
     /// Stores a value in the environment.
     pub fn store(self: *Environment, name: []const u8, value: Value) !void {
-        self.globals.store(name, value) catch unreachable;
+        self.store.store(name, value) catch unreachable;
     }
 
     /// Deinitializes the environment.
     pub fn deinit(self: *Environment) void {
-        self.globals.deinit();
+        self.store.deinit();
     }
 };
 
@@ -113,18 +128,19 @@ fn runStatement(self: *Self, statement: Statement) ?Value {
 }
 
 fn runLetStatement(self: *Self, statement: ast.LetStatement) ?Value {
-    // if (self.environment.globals.contains(statement.name)) {
-    //     return null;
-    // }
+    // TODO: throw error if variable already exists
+    if (self.environment.exists(statement.name)) {
+        return null;
+    }
     const value = self.runExpression(statement.expression) orelse unreachable;
-    self.environment.globals.store(statement.name, value) catch unreachable;
+    self.environment.store(statement.name, value) catch unreachable;
     return null;
 }
 
 fn runExpression(self: *Self, expression: Expression) ?Value {
     return switch (expression) {
         .binary => |inner| self.runBinaryExpression(inner),
-        .identifier => |name| self.environment.globals.load(name),
+        .identifier => |name| self.environment.load(name),
         .prefix => |inner| self.runPrefixExpression(inner),
         .number => |value| .{ .number = value },
         .string => |value| .{ .string = value },

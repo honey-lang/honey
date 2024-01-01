@@ -1,57 +1,36 @@
 const std = @import("std");
 const honey = @import("honey.zig");
 const ast = @import("ast.zig");
+const utils = @import("utils.zig");
 const Program = ast.Program;
 const Statement = ast.Statement;
 const Expression = ast.Expression;
 
 const Self = @This();
-
-const VariableStore = struct {
-    keys: std.BufSet,
-    values: std.StringHashMap(Value),
-
-    pub fn init(ally: std.mem.Allocator) VariableStore {
-        return .{
-            .keys = std.BufSet.init(ally),
-            .values = std.StringHashMap(Value).init(ally),
-        };
-    }
-
-    pub fn deinit(self: *VariableStore) void {
-        self.keys.deinit();
-        self.values.deinit();
-    }
-
-    pub fn delete(self: *VariableStore, name: []const u8) void {
-        if (!self.values.contains(name)) {
-            return;
-        }
-        self.keys.remove(name);
-        self.values.remove(name);
-    }
-
-    pub fn store(self: *VariableStore, name: []const u8, value: Value) !void {
-        const result = self.values.getOrPut(name) catch unreachable;
-        if (!result.found_existing) {
-            // we have to store the slices ourselves because the hashmap doesn't copy them
-            try self.keys.insert(name);
-            result.key_ptr.* = self.keys.hash_map.getKey(name).?;
-        }
-        result.value_ptr.* = value;
-    }
-
-    pub fn load(self: *VariableStore, name: []const u8) ?Value {
-        return self.values.get(name);
-    }
-};
+const ValueStore = utils.Store(Value);
 
 pub const Environment = struct {
     arena: std.heap.ArenaAllocator,
-    globals: VariableStore,
+    globals: ValueStore,
+    parent: ?*Environment = null,
 
     pub fn init(ally: std.mem.Allocator) Environment {
-        return .{ .arena = std.heap.ArenaAllocator.init(ally), .globals = VariableStore.init(ally) };
+        return .{ .arena = std.heap.ArenaAllocator.init(ally), .globals = ValueStore.init(ally) };
+    }
+
+    pub fn initWithParent(ally: std.mem.Allocator, parent: *Environment) Environment {
+        var self = Environment.init(ally);
+        self.parent = parent;
+        return self;
+    }
+
+    pub fn load(self: *Environment, name: []const u8) ?Value {
+        if (self.globals.contains(name)) {
+            return self.globals.load(name);
+        } else if (self.parent) |parent| {
+            return parent.load(name);
+        }
+        return null;
     }
 
     pub fn deinit(self: *Environment) void {

@@ -1,106 +1,25 @@
 const std = @import("std");
-const utils = @import("utils.zig");
-const Position = utils.Position;
+const Token = @import("token.zig").Token;
+const TokenData = @import("token.zig").TokenData;
 
 const BuiltinChar = '@';
 
-pub const TokenTag = enum {
-    /// .number represents an unparsed number (e.g. "123")
-    number,
-    /// .identifier represents an identifier (e.g. a variable name)
-    identifier,
-    /// .string represents a string literal (e.g. "hello world")
-    string,
-    /// .builtin represents a builtin function (e.g. @print)
-    builtin,
-    /// .let represents the keyword 'let'
-    let,
-    /// .true represents the keyword 'true'
-    true,
-    /// .false represents the keyword 'false'
-    false,
-    /// .plus represents the character '+'
-    plus,
-    /// .minus represents the character '-'
-    minus,
-    /// .star represents the character '*'
-    star,
-    /// .slash represents the character '/'
-    slash,
-    /// .modulo represents the character '%'
-    modulo,
-    /// .doublestar represents the character '**'
-    doublestar,
-    /// .semicolon represents the character ';'
-    semicolon,
-    /// .assignment represents the character '='
-    assignment,
-    /// .comma represents the character ','
-    comma,
-    /// .left_paren represents the character '('
-    left_paren,
-    /// .right_paren represents the character ')'
-    right_paren,
-    /// .invalid represents an invalid character
-    invalid,
-};
-
-pub const Token = union(TokenTag) {
-    number: []const u8,
-    identifier: []const u8,
-    string: []const u8,
-    builtin: []const u8,
-    let,
-    true,
-    false,
-    plus,
-    minus,
-    star,
-    slash,
-    modulo,
-    doublestar,
-    semicolon,
-    assignment,
-    comma,
-    left_paren,
-    right_paren,
-    invalid: u8,
-
-    pub fn format(self: Token, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        return switch (self) {
-            .number => |value| try writer.print("{{ .number = \"{s}\" }}", .{value}),
-            .identifier => |value| try writer.print("{{ .identifier = \"{s}\" }}", .{value}),
-            .string => |value| try writer.print("{{ .string = \"{s}\" }}", .{value}),
-            .builtin => |value| try writer.print("{{ .builtin = \"{s}\" }}", .{value}),
-            .invalid => |value| try writer.print("{{ .invalid = '{c}' }}", .{value}),
-            inline else => try writer.print(".{s}", .{@tagName(self)}),
-        };
-    }
-};
-
 const KeywordMap = std.ComptimeStringMap(Token, .{
     .{ "let", .let },
+    .{ "const", .@"const" },
+    .{ "fn", .@"fn" },
+    .{ "return", .@"return" },
+    .{ "if", .@"if" },
+    .{ "else", .@"else" },
+    .{ "while", .@"while" },
+    .{ "for", .@"for" },
     .{ "true", .true },
     .{ "false", .false },
+    .{ "or", .@"or" },
+    .{ "and", .@"and" },
 });
 
-pub const TokenData = struct {
-    token: Token,
-    position: Position,
-
-    pub fn create(token: Token, start: usize, end: usize) TokenData {
-        return .{
-            .token = token,
-            .position = .{ .start = start, .end = end },
-        };
-    }
-
-    pub fn format(self: TokenData, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("TokenData {{ .token = {s}, .position = {s} }}", .{ self.token, self.position });
-    }
-};
-
-pub const Cursor = utils.Cursor(u8);
+pub const Cursor = @import("../utils/cursor.zig").Cursor(u8);
 const Self = @This();
 
 tokens: std.ArrayList(TokenData),
@@ -121,11 +40,16 @@ pub fn readAll(self: *Self) ![]const TokenData {
     return self.tokens.items;
 }
 
+/// Reads a single token from the current position or null if no token could be read
 pub fn read(self: *Self) ?TokenData {
     self.skipWhitespace();
     if (!self.cursor.canRead()) {
         return null;
     }
+    if (self.readComment()) |token| {
+        return token;
+    }
+
     if (self.readChar()) |token| {
         return token;
     }
@@ -145,6 +69,7 @@ fn skipWhitespace(self: *Self) void {
     _ = self.cursor.readWhile(std.ascii.isWhitespace);
 }
 
+// Reads tokens from a map of characters to tokens or a fallback if no match was found
 const TokenCharMap = struct { u8, Token };
 fn readCharMap(self: *Self, comptime map: []const TokenCharMap, fallback: Token) Token {
     const next = self.cursor.peek() orelse return fallback;
@@ -158,17 +83,37 @@ fn readCharMap(self: *Self, comptime map: []const TokenCharMap, fallback: Token)
     return fallback;
 }
 
+/// Attempts to read a comment from the current position or null if no comment was found
+fn readComment(self: *Self) ?TokenData {
+    if (self.cursor.current() != '/' or self.cursor.peek() != '/') {
+        return null;
+    }
+    const data, const position = self.cursor.readUntil(struct {
+        fn check(char: u8) bool {
+            return char == '\n';
+        }
+    }.check);
+    return TokenData.create(.{ .comment = std.mem.trim(u8, data, "/") }, position.start, position.end);
+}
+
+/// Attempts to read a single/double character token from the current position or null if no token was found
 fn readChar(self: *Self) ?TokenData {
     const start = self.cursor.getCurrentPos();
     const data: Token = switch (self.cursor.current()) {
-        '+' => .plus,
-        '-' => .minus,
-        '*' => self.readCharMap(&.{.{ '*', .doublestar }}, .star),
-        '/' => .slash,
-        '%' => .modulo,
-        '=' => .assignment,
+        '+' => self.readCharMap(&.{.{ '=', .plus_assignment }}, .plus),
+        '-' => self.readCharMap(&.{.{ '=', .minus_assignment }}, .minus),
+        '*' => self.readCharMap(&.{ .{ '*', .doublestar }, .{ '=', .star_assignment } }, .star),
+        // we do not need to worry about comments here because we parse them before we get to this point
+        '/' => self.readCharMap(&.{.{ '=', .slash_assignment }}, .slash),
+        '%' => self.readCharMap(&.{.{ '=', .modulo_assignment }}, .modulo),
+        '=' => self.readCharMap(&.{.{ '=', .equal }}, .assignment),
+        '!' => self.readCharMap(&.{.{ '=', .not_equal }}, .bang),
+        '>' => self.readCharMap(&.{.{ '=', .greater_than_equal }}, .greater_than),
+        '<' => self.readCharMap(&.{.{ '=', .less_than_equal }}, .less_than),
         '(' => .left_paren,
         ')' => .right_paren,
+        '{' => .left_brace,
+        '}' => .right_brace,
         ',' => .comma,
         ';' => .semicolon,
         else => return null,
@@ -178,6 +123,7 @@ fn readChar(self: *Self) ?TokenData {
     return TokenData.create(data, start, self.cursor.getCurrentPos());
 }
 
+/// Reads a string literal from the current position
 fn readString(self: *Self) TokenData {
     const start = self.cursor.getCurrentPos();
     var escaped = false;
@@ -203,6 +149,7 @@ fn readString(self: *Self) TokenData {
     return TokenData.create(.{ .string = std.mem.trim(u8, self.cursor.input[start..end], "\"") }, start, end);
 }
 
+/// Reads a number-like token from the current position
 fn readNumberlike(self: *Self) TokenData {
     const data, const position = self.cursor.readWhile(struct {
         fn check(char: u8) bool {
@@ -212,6 +159,7 @@ fn readNumberlike(self: *Self) TokenData {
     return TokenData.create(.{ .number = data }, position.start, position.end);
 }
 
+/// Reads a builtin function from the current position
 fn readBuiltin(self: *Self) TokenData {
     const start = self.cursor.getCurrentPos();
     std.debug.assert(self.cursor.current() == BuiltinChar);
@@ -220,6 +168,7 @@ fn readBuiltin(self: *Self) TokenData {
     return TokenData.create(.{ .builtin = self.cursor.input[start .. data.position.end + 1] }, start, data.position.end);
 }
 
+/// Reads an identifier from the current position
 fn readIdentifier(self: *Self) TokenData {
     const data, const position = self.cursor.readWhile(struct {
         fn check(char: u8) bool {
@@ -281,5 +230,38 @@ test "test builtin lexing" {
 test "test string lexing" {
     try tokenizeAndExpect("\"hello world\"", &.{
         TokenData.create(.{ .string = "hello world" }, 0, 13),
+    });
+}
+
+test "test assignment lexing" {
+    try tokenizeAndExpect("x = 1", &.{
+        TokenData.create(.{ .identifier = "x" }, 0, 0),
+        TokenData.create(.assignment, 2, 2),
+        TokenData.create(.{ .number = "1" }, 4, 4),
+    });
+    try tokenizeAndExpect("x += 1", &.{
+        TokenData.create(.{ .identifier = "x" }, 0, 0),
+        TokenData.create(.plus_assignment, 2, 3),
+        TokenData.create(.{ .number = "1" }, 5, 5),
+    });
+    try tokenizeAndExpect("x -= 1", &.{
+        TokenData.create(.{ .identifier = "x" }, 0, 0),
+        TokenData.create(.minus_assignment, 2, 3),
+        TokenData.create(.{ .number = "1" }, 5, 5),
+    });
+    try tokenizeAndExpect("x *= 1", &.{
+        TokenData.create(.{ .identifier = "x" }, 0, 0),
+        TokenData.create(.star_assignment, 2, 3),
+        TokenData.create(.{ .number = "1" }, 5, 5),
+    });
+    try tokenizeAndExpect("x /= 1", &.{
+        TokenData.create(.{ .identifier = "x" }, 0, 0),
+        TokenData.create(.slash_assignment, 2, 3),
+        TokenData.create(.{ .number = "1" }, 5, 5),
+    });
+    try tokenizeAndExpect("x %= 1", &.{
+        TokenData.create(.{ .identifier = "x" }, 0, 0),
+        TokenData.create(.modulo_assignment, 2, 3),
+        TokenData.create(.{ .number = "1" }, 5, 5),
     });
 }

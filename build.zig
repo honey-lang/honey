@@ -4,6 +4,24 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // create exports for the wasm target
+    if (target.result.isWasm()) {
+        const lib = b.addSharedLibrary(.{
+            .name = "honey",
+            .root_source_file = .{ .path = "src/wasm.zig" },
+            .target = target,
+            .optimize = .ReleaseSmall,
+            .version = .{ .major = 0, .minor = 0, .patch = 1 },
+        });
+        // used to ensure exports
+        lib.rdynamic = true;
+
+        const install = b.addInstallArtifact(lib, .{});
+        install.step.dependOn(&lib.step);
+        b.default_step.dependOn(&install.step);
+        return;
+    }
+
     const clap = b.dependency("clap", .{
         .target = target,
         .optimize = optimize,
@@ -14,7 +32,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addModule("clap", clap.module("clap"));
+    exe.root_module.addImport("clap", clap.module("clap"));
 
     b.installArtifact(exe);
 
@@ -33,7 +51,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    unit_tests.addModule("clap", clap.module("clap"));
+    unit_tests.root_module.addImport("clap", clap.module("clap"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

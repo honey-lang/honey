@@ -1,12 +1,2 @@
 
-let random = @rand(1, 15);
-
-let hello = "Hello";
-let world = "World!";
-
-@println("Random is: ", random);
-@println(hello + " " + world);
-
-fn test() {
-
-}
+@println(1 + 3 * 2)

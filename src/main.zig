@@ -1,9 +1,10 @@
 const std = @import("std");
 const clap = @import("clap");
 const honey = @import("honey.zig");
-const Repl = @import("Repl.zig");
-const Parser = @import("Parser.zig");
-const Evaluator = @import("Evaluator.zig");
+const Repl = @import("utils/Repl.zig");
+const ast = @import("parser/ast.zig");
+const Parser = @import("parser/Parser.zig");
+const Evaluator = @import("evaluator/Evaluator.zig");
 
 const Header =
     \\
@@ -46,24 +47,27 @@ pub fn main() !void {
     var environment = Evaluator.Environment.init(allocator);
     defer environment.deinit();
     var evaluator = Evaluator.init(allocator, &environment);
+    // handle REPL separately
     if (res.args.repl != 0) {
         try runRepl(&evaluator, allocator);
-    } else if (res.args.input) |input| {
-        _ = run(&evaluator, allocator, input) catch |err| {
-            try stdout.print("Error: {any}\n", .{err});
-        };
-    } else if (res.positionals.len > 0) {
-        var file = try std.fs.cwd().openFile(res.positionals[0], .{});
-        defer file.close();
-        const input = try file.reader().readAllAlloc(allocator, std.math.maxInt(usize));
-
-        _ = run(&evaluator, allocator, input) catch |err| {
-            try stdout.print("Error: {any}\n", .{err});
-        };
-    } else {
-        // show help
-        try stdout.print(Header ++ Options, .{honey.version});
+        return;
     }
+    const input = blk: {
+        if (res.args.input) |input| {
+            break :blk input;
+        } else if (res.positionals.len > 0) {
+            var file = try std.fs.cwd().openFile(res.positionals[0], .{});
+            defer file.close();
+            break :blk try file.reader().readAllAlloc(allocator, std.math.maxInt(usize));
+        } else {
+            // show help & exit
+            try stdout.print(Header ++ Options, .{honey.version});
+            return;
+        }
+    };
+    _ = run(&evaluator, input, allocator) catch |err| {
+        try stdout.print("An unexpected error occurred: {s}\n", .{@errorName(err)});
+    };
 }
 
 fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator) !void {
@@ -74,23 +78,20 @@ fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator) !void {
     try repl.getStdOut().writeAll("Type ':exit' to exit the REPL.\n");
     while (true) {
         const input = try repl.prompt("repl > ") orelse continue;
-        const output = run(evaluator, allocator, input) catch |err| {
+        const result = run(evaluator, input, allocator) catch |err| {
             try repl.getStdOut().print("Error: {any}\n", .{err});
             continue;
         };
-        if (output) |value| {
+        if (result) |value| {
             try repl.getStdOut().print("Output: {s}\n", .{value});
         }
     }
 }
 
-fn run(evaluator: *Evaluator, allocator: std.mem.Allocator, input: []const u8) !?Evaluator.Value {
-    const tokens = try honey.tokenize(input, allocator);
-    var parser = Parser.init(tokens, allocator);
-    const program = try parser.parse();
-    defer parser.deinit();
-    defer allocator.free(tokens);
-    return evaluator.run(program);
+inline fn run(evaluator: *Evaluator, input: []const u8, allocator: std.mem.Allocator) !?Evaluator.Value {
+    const result = try honey.parse(input, .{ .allocator = allocator });
+    defer result.deinit();
+    return evaluator.run(result.data);
 }
 
 pub fn exit() !void {

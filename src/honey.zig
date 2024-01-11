@@ -1,25 +1,63 @@
 const std = @import("std");
-const Lexer = @import("Lexer.zig");
-const ast = @import("ast.zig");
-const Parser = @import("Parser.zig");
-const Evaluator = @import("Evaluator.zig");
+const Lexer = @import("lexer/Lexer.zig");
+const TokenData = @import("lexer/token.zig").TokenData;
+const ast = @import("parser/ast.zig");
+const Parser = @import("parser/Parser.zig");
+const Evaluator = @import("evaluator/Evaluator.zig");
 
 pub const version = "0.0.1";
 
-pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) ![]const Lexer.TokenData {
+pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) ![]const TokenData {
     var lexer = Lexer.init(input, allocator);
+    errdefer lexer.deinit();
     _ = try lexer.readAll();
     return try lexer.tokens.toOwnedSlice();
 }
 
-pub fn run(input: []const u8, allocator: std.mem.Allocator, environment: *Evaluator.Environment) !?Evaluator.Value {
-    const tokens = try tokenize(input, allocator);
-    defer allocator.free(tokens);
-    var parser = Parser.init(tokens, allocator);
+pub const ParseOptions = struct {
+    allocator: std.mem.Allocator,
+    diagnostics: ?*Parser.Diagnostics = null,
+};
+
+pub fn parse(input: []const u8, options: ParseOptions) !Result(ast.Program) {
+    var arena = std.heap.ArenaAllocator.init(options.allocator);
+    errdefer arena.deinit();
+    const tokens = try tokenize(input, arena.allocator());
+
+    var parser = Parser.init(tokens, .{ .ally = arena.allocator() });
     defer parser.deinit();
-    var program = try parser.parse();
-    defer program.deinit();
-    var evaluator = Evaluator.init(allocator, environment);
+
+    return Result(ast.Program){
+        .data = try parser.parse(),
+        .arena = arena,
+    };
+}
+
+pub const RunOptions = struct {
+    allocator: std.mem.Allocator,
+    environment: *Evaluator.Environment,
+};
+
+pub fn run(input: []const u8, options: RunOptions) !Result(?Evaluator.Value) {
+    const result = try parse(input, .{ .allocator = options.allocator });
+    const allocator = result.arena.allocator();
+    var evaluator = Evaluator.init(allocator, options.environment);
     defer evaluator.deinit();
-    return evaluator.run(program);
+    return Result(?Evaluator.Value){
+        .data = evaluator.run(result.data),
+        .arena = result.arena,
+    };
+}
+
+/// A result type that holds a value and an arena allocator.
+/// Can be used to easily free the data allocated.
+pub fn Result(comptime T: type) type {
+    return struct {
+        data: T,
+        arena: std.heap.ArenaAllocator,
+
+        pub fn deinit(self: @This()) void {
+            self.arena.deinit();
+        }
+    };
 }

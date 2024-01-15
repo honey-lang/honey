@@ -32,6 +32,8 @@ pub const TokenTag = enum {
     true,
     /// .false represents the keyword 'false'
     false,
+    /// .null represents the keyword 'null'
+    null,
     /// .or represents the keyword 'or'
     @"or",
     /// .and represents the keyword 'and'
@@ -106,6 +108,7 @@ pub const Token = union(TokenTag) {
     @"for",
     true,
     false,
+    null,
     @"or",
     @"and",
     equal,

@@ -7,6 +7,14 @@ pub const Opcode = enum(u8) {
     @"return" = 0x00,
     /// The `const` opcode is used to push a constant value onto the stack.
     @"const" = 0x01,
+    /// The `pop` opcode is used to pop a value from the stack.
+    pop = 0x02,
+    /// The `true opcode is used to push a true value onto the stack.
+    true = 0x03,
+    /// The `false` opcode is used to push a false value onto the stack.
+    false = 0x04,
+    /// The `null` opcode is used to push a null value onto the stack.
+    null = 0x05,
     /// The `add` opcode is used to add two values.
     add = 0x10,
     /// The `sub` opcode is used to subtract two values.
@@ -19,6 +27,22 @@ pub const Opcode = enum(u8) {
     mod = 0x14,
     /// The `pow` opcode is used to calculate the power of two values.
     pow = 0x15,
+    /// The `eql` opcode is used to check if two values are equal.
+    eql = 0x20,
+    /// The `neql` opcode is used to check if two values are not equal.
+    neql = 0x21,
+    /// The `less_than` opcode is used to check if the first value is less than the second value.
+    lt = 0x22,
+    /// The `less_than_or_eql` opcode is used to check if the first value is less than or equal to the second value.
+    lt_eql = 0x23,
+    /// The `greater_than` opcode is used to check if the first value is greater than the second value.
+    gt = 0x24,
+    /// The `greater_than_or_eql` opcode is used to check if the first value is greater than or equal to the second value.
+    gt_eql = 0x25,
+    /// The `and` opcode is used to check if both values are true.
+    @"and" = 0x30,
+    /// The `or` opcode is used to check if either value is true.
+    @"or" = 0x31,
     /// The halt opcode is used to halt execution.
     halt = 0xff,
 
@@ -61,12 +85,24 @@ pub const Opcode = enum(u8) {
 pub const Instruction = union(Opcode) {
     @"return": void,
     @"const": u16,
+    pop: void,
+    true: void,
+    false: void,
+    null: void,
     add: void,
     sub: void,
     mul: void,
     div: void,
     mod: void,
     pow: void,
+    eql: void,
+    neql: void,
+    lt: void,
+    lt_eql: void,
+    gt: void,
+    gt_eql: void,
+    @"and": void,
+    @"or": void,
     halt: void,
 
     pub fn opcode(self: Instruction) Opcode {

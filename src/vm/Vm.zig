@@ -81,6 +81,8 @@ program_counter: usize = 0,
 stack_pointer: usize = 0,
 /// The stack itself
 stack: Stack(Value),
+/// Holds the last value popped from the stack
+last_popped: ?Value = null,
 
 /// Initializes the VM with the needed values
 pub fn init(bytecode: Bytecode, ally: std.mem.Allocator) Self {
@@ -117,6 +119,11 @@ pub fn dump(self: *Self) void {
     std.debug.print(line, .{});
 }
 
+/// Returns the last value popped from the stack
+pub fn getLastPopped(self: *Self) ?Value {
+    return self.last_popped;
+}
+
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
     while (self.running) {
@@ -132,12 +139,19 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     }
 
     switch (instruction) {
-        .halt => self.running = false,
         .@"const" => {
             const constant = try self.fetchConstant();
             try self.pushOrError(constant);
         },
+        // constant value instructions
+        .true => try self.pushOrError(Value.True),
+        .false => try self.pushOrError(Value.False),
+        .null => try self.pushOrError(Value.Null),
+        .pop => _ = try self.popOrError(),
         .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),
+        .eql, .neql => try self.executeLogical(instruction),
+        .gt, .gt_eql, .lt, .lt_eql => try self.executeComparison(instruction),
+        .halt => self.running = false,
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
                 instruction.byte(),
@@ -231,18 +245,27 @@ fn pushOrError(self: *Self, value: Value) VmError!void {
 
 /// Pops a value from the stack or reports and returns an error
 fn popOrError(self: *Self) VmError!Value {
-    return self.stack.pop() catch |err| {
+    self.last_popped = self.stack.pop() catch |err| {
         self.diagnostics.report("Failed to pop value from stack: {any}", .{err});
         return error.StackUnderflow;
     };
+    return self.last_popped.?;
+}
+
+/// Pops `N` values from the stack or reports and returns an error
+fn popCountOrError(self: *Self, comptime N: comptime_int) VmError!RepeatedTuple(Value, N) {
+    var tuple: RepeatedTuple(Value, N) = undefined;
+    inline for (0..N) |index| {
+        @field(tuple, std.fmt.comptimePrint("{d}", .{index})) = try self.popOrError();
+    }
+    return tuple;
 }
 
 /// Executes an arithmetic instruction
 fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
-    const rhs = try self.popOrError();
-    const lhs = try self.popOrError();
+    const rhs, const lhs = try self.popCountOrError(2);
     if (lhs != .number or rhs != .number) {
-        // self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ first, second });
+        self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ lhs, rhs });
         return error.UnexpectedValueType;
     }
     try self.pushOrError(.{ .number = switch (opcode) {
@@ -254,6 +277,44 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
         .pow => std.math.pow(NumberType, lhs.number, rhs.number),
         inline else => unreachable,
     } });
+}
+
+fn executeComparison(self: *Self, opcode: Opcode) VmError!void {
+    const rhs, const lhs = try self.popCountOrError(2);
+    if (lhs != .number or rhs != .number) {
+        self.diagnostics.report("Attempted to perform comparison on non-number values: {s} and {s}", .{ lhs, rhs });
+        return error.UnexpectedValueType;
+    }
+
+    const result = switch (opcode) {
+        .gt => lhs.number > rhs.number,
+        .gt_eql => lhs.number >= rhs.number,
+        .lt => lhs.number < rhs.number,
+        .lt_eql => lhs.number <= rhs.number,
+        inline else => unreachable,
+    };
+    try self.pushOrError(if (result) Value.True else Value.False);
+}
+
+/// Executes a logical instruction
+fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
+    const rhs, const lhs = try self.popCountOrError(2);
+    if (lhs != .number or rhs != .number) {
+        self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ lhs, rhs });
+        return error.UnexpectedValueType;
+    }
+
+    const result = switch (opcode) {
+        .eql => lhs.number == rhs.number,
+        .neql => lhs.number != rhs.number,
+        inline else => unreachable,
+    };
+    try self.pushOrError(if (result) Value.True else Value.False);
+}
+
+/// Returns a tuple of `N` elements, all of type `T`.
+pub fn RepeatedTuple(comptime T: type, comptime N: comptime_int) type {
+    return std.meta.Tuple(&[_]type{T} ** N);
 }
 
 test "ensure program results in correct value" {

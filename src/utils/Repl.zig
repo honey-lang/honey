@@ -50,7 +50,7 @@ pub fn prompt(self: Self, message: []const u8) !?[]const u8 {
     _ = try self.stdout.write(message);
     var stream = std.io.fixedBufferStream(self.buffer);
     const writer = stream.writer();
-    self.stdin.streamUntilDelimiter(writer, '\n', null) catch |err| {
+    self.stdin.streamUntilDelimiter(writer, '\r', null) catch |err| {
         // EOF shouldn't be elevated to an error
         if (err == error.EndOfStream) {
             return null;

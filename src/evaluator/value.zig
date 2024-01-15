@@ -3,7 +3,7 @@ const std = @import("std");
 pub const Value = union(enum) {
     pub const True = Value{ .boolean = true };
     pub const False = Value{ .boolean = false };
-    pub const Null = Value{ .null = null };
+    pub const Null = Value{ .null = {} };
     pub const Void = Value{ .void = {} };
 
     number: f64,

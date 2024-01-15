@@ -239,6 +239,8 @@ pub const Expression = union(enum) {
     string: []const u8,
     /// A boolean literal, either `true` or `false`.
     boolean: bool,
+    /// A null literal
+    null: void,
     /// A prefix expression, such as `-1`, `!true`, or `~0`.
     prefix: PrefixExpression,
     /// A binary expression, such as `1 + 2`, `3 * 4`, or `5 / 6`.
@@ -262,6 +264,7 @@ pub const Expression = union(enum) {
             .identifier => |inner| writer.print("{s}", .{inner}),
             .string => |inner| writer.print("\"{s}\"", .{inner}),
             .boolean => |inner| writer.writeAll(if (inner) "true" else "false"),
+            .null => writer.writeAll("null"),
             .prefix => |inner| writer.print("({s}{s})", .{ inner.operator, inner.rhs }),
             .binary => |inner| writer.print("({s} {s} {s})", .{ inner.lhs, inner.operator, inner.rhs }),
             .@"if" => |inner| {

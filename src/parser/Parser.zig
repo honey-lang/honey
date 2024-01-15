@@ -320,6 +320,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
         .string => |inner| .{ .string = inner },
         .true => .{ .boolean = true },
         .false => .{ .boolean = false },
+        .null => .null,
         .identifier => |identifier| .{ .identifier = identifier },
         .@"if" => blk: {
             self.cursor.rewind() catch unreachable;

@@ -15,6 +15,7 @@ const KeywordMap = std.ComptimeStringMap(Token, .{
     .{ "for", .@"for" },
     .{ "true", .true },
     .{ "false", .false },
+    .{ "null", .null },
     .{ "or", .@"or" },
     .{ "and", .@"and" },
 });

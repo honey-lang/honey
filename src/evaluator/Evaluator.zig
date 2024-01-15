@@ -311,6 +311,7 @@ fn runExpression(self: *Self, expression: Expression, options: RunOptions) anyer
         .number => |value| .{ .number = value },
         .string => |value| .{ .string = value },
         .boolean => |value| if (value) Value.True else Value.False,
+        .null => Value.Null,
         .@"if" => |inner| try self.runIfExpression(inner, options),
         .@"while" => |inner| try self.runWhileExpression(inner, options),
         .builtin => |inner| try self.runBuiltinExpression(inner, options),

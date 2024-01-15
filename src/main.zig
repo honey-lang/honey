@@ -58,11 +58,7 @@ pub fn main() !void {
     var evaluator = Evaluator.init(allocator, &environment);
     // handle REPL separately
     if (res.args.repl != 0) {
-        if (res.args.engine == .bytecode) {
-            try stdout.print("Bytecode engine is not supported in REPL mode.\n", .{});
-            return;
-        }
-        try runRepl(&evaluator, allocator);
+        try runRepl(&evaluator, allocator, res.args.engine orelse .eval);
         return;
     }
     const input = blk: {
@@ -95,7 +91,7 @@ pub fn main() !void {
         try stdout.print("An unexpected error occurred: {s}\n", .{@errorName(err)});
     };
 }
-fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator) !void {
+fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator, engine: Engine) !void {
     var repl = try Repl.init(allocator, 1024);
     defer repl.deinit();
     try repl.addCommand("exit", "Exit the REPL", exit);
@@ -103,12 +99,24 @@ fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator) !void {
     try repl.getStdOut().writeAll("Type ':exit' to exit the REPL.\n");
     while (true) {
         const input = try repl.prompt("repl > ") orelse continue;
-        const result = run(evaluator, input, allocator) catch |err| {
-            try repl.getStdOut().print("Error: {any}\n", .{err});
-            continue;
-        };
-        if (result) |value| {
-            try repl.getStdOut().print("Output: {s}\n", .{value});
+        switch (engine) {
+            .bytecode => {
+                // runInVm will print the error for us
+                var result = honey.runInVm(input, .{ .allocator = allocator }) catch continue;
+                defer result.deinit();
+                if (result.data.getLastPopped()) |value| {
+                    try repl.getStdOut().print("Output: {s}\n", .{value});
+                }
+            },
+            .eval => {
+                const result = run(evaluator, input, allocator) catch |err| {
+                    try repl.getStdOut().print("Error: {any}\n", .{err});
+                    continue;
+                };
+                if (result) |value| {
+                    try repl.getStdOut().print("Output: {s}\n", .{value});
+                }
+            },
         }
     }
 }

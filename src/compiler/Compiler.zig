@@ -1,6 +1,7 @@
 const std = @import("std");
 const Cursor = @import("../utils/cursor.zig").Cursor;
 const codec = @import("../utils/codec.zig");
+const fmt = @import("../utils/fmt.zig");
 const ast = @import("../parser/ast.zig");
 const opcodes = @import("opcodes.zig");
 const Opcode = opcodes.Opcode;
@@ -58,7 +59,11 @@ pub fn compile(self: *Self) !Bytecode {
 /// Compiles a statement into bytecode
 fn compileStatement(self: *Self, statement: ast.Statement) !void {
     switch (statement) {
-        .expression => |inner| try self.compileExpression(inner.expression),
+        .expression => |inner| {
+            try self.compileExpression(inner.expression);
+            // pop the result of the statement off the stack after it's done
+            try self.addInstruction(.pop);
+        },
         else => @panic("unimplemented statement type"),
     }
 }
@@ -72,7 +77,13 @@ inline fn resolveOpToInstr(operator: ast.Operator) opcodes.Instruction {
         .slash => .div,
         .modulo => .mod,
         .doublestar => .pow,
-        inline else => @panic("Invalid operator"),
+        .equal => .eql,
+        .not_equal => .neql,
+        .less_than => .lt,
+        .less_than_equal => .lt_eql,
+        .greater_than => .gt,
+        .greater_than_equal => .gt_eql,
+        inline else => fmt.panicWithFormat("unexpected operator: {s}", .{operator}),
     };
 }
 
@@ -88,7 +99,9 @@ fn compileExpression(self: *Self, expression: ast.Expression) !void {
             try self.constants.append(.{ .number = value });
             try self.addInstruction(.{ .@"const" = @as(u16, @intCast(self.constants.items.len - 1)) });
         },
-        else => @panic("unimplemented expression type"),
+        .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
+        .null => try self.addInstruction(.null),
+        inline else => fmt.panicWithFormat("unexpected expression type: {s}", .{expression}),
     }
 }
 

@@ -70,21 +70,17 @@ pub const VmRunOptions = struct {
     allocator: std.mem.Allocator,
 };
 
-pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(void) {
+pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(Vm) {
     const result = try compile(input, .{ .allocator = options.allocator });
     defer result.deinit();
-    std.debug.print("Bytecode:\n{s}\n", .{result.data});
-    var arena = result.arena;
+
+    var arena = std.heap.ArenaAllocator.init(options.allocator);
     var vm = Vm.init(result.data, arena.allocator());
-    defer vm.deinit();
     vm.run() catch |err| {
         vm.report();
         return err;
     };
-    return Result(void){
-        .data = {},
-        .arena = result.arena,
-    };
+    return Result(Vm){ .data = vm, .arena = arena };
 }
 
 /// A result type that holds a value and an arena allocator.

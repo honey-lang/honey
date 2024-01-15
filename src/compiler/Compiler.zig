@@ -68,7 +68,14 @@ fn compileExpression(self: *Self, expression: ast.Expression) !void {
         .binary => |inner| {
             try self.compileExpression(inner.lhs.*);
             try self.compileExpression(inner.rhs.*);
-            try self.addInstruction(.add);
+            try self.addInstruction(switch (inner.operator) {
+                .plus => .add,
+                .minus => .sub,
+                .star => .mul,
+                .slash => .div,
+                .modulo => .mod,
+                inline else => unreachable,
+            });
         },
         .number => |value| {
             try self.constants.append(.{ .number = value });

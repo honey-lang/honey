@@ -8,11 +8,11 @@ const Evaluator = @import("evaluator/Evaluator.zig");
 
 const Header =
     \\
-    \\       _  _                   
-    \\      | || |___ _ _  ___ _  _ 
+    \\       _  _
+    \\      | || |___ _ _  ___ _  _
     \\      | __ / _ \ ' \/ -_) || |
     \\      |_||_\___/_||_\___|\_, |
-    \\                         |__/ 
+    \\                         |__/
     \\  A small, toy programming language.
     \\          Version: v{s}
     \\
@@ -79,7 +79,14 @@ pub fn main() !void {
     };
 
     if (engine == .bytecode) {
-        _ = try honey.runInVm(input, .{ .allocator = allocator });
+        const result = try honey.runInVm(input, .{ .allocator = allocator });
+        defer result.deinit();
+
+        var vm = result.data;
+        const remaining = vm.stack.popOrNull();
+        if (remaining) |value| {
+            std.debug.print("Program resulted in value: {s}\n", .{value});
+        }
         return;
     }
 

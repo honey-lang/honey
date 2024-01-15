@@ -105,7 +105,7 @@ pub fn dump(self: *Self) void {
     const line = "-" ** (max_per_line * 3 + 1) ++ "\n";
     std.debug.print("\n" ++ line, .{});
     for (self.instructions, 0..) |byte, index| {
-        std.debug.print("{X:0<2}", .{byte});
+        std.debug.print(HexFormat, .{byte});
 
         if (index % max_per_line == max_per_line - 1 or index == self.instructions.len - 1) {
             std.debug.print("\n", .{});
@@ -119,11 +119,8 @@ pub fn dump(self: *Self) void {
 
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
-    self.dump();
     while (self.running) {
         const instruction = try self.fetchInstruction();
-
-        std.debug.print("Constants Ptr: {x}\n", .{&self.constants});
         try self.execute(instruction);
     }
 }
@@ -135,9 +132,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     }
 
     switch (instruction) {
-        .halt => {
-            self.running = false;
-        },
+        .halt => self.running = false,
         .@"const" => {
             const constant = try self.fetchConstant();
             try self.pushOrError(constant);
@@ -223,8 +218,7 @@ fn fetchConstant(self: *Self) VmError!Value {
         self.diagnostics.report("Constant index ({d}) exceeded bounds of constants ({d}).", .{ index, self.constants.len });
         return error.OutOfProgramBounds;
     }
-    const fetched = self.constants[index];
-    return fetched;
+    return self.constants[index];
 }
 
 /// Pushes a value onto the stack or reports and returns an error
@@ -259,7 +253,6 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
         .mod => @mod(first.number, second.number),
         else => unreachable,
     };
-    std.debug.print("Performing arithmetic operation {s} on {s} and {s}.\n", .{ @tagName(opcode), first, second });
     try self.pushOrError(.{ .number = result });
 }
 

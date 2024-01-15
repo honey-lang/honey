@@ -20,17 +20,14 @@ const Header =
 ;
 
 const Options =
-    \\  -h, --help           Display this help menu and exit.
-    \\  -r, --repl           Start the REPL.
-    \\  -e, --engine <str>   Select the engine to use: 'bytecode' or 'eval' (default: 'eval')
-    \\  -i, --input  <str>   Evaluate code from the command line.
-    \\  <str>                Evaluate code from a given file.
+    \\  -h, --help                Display this help menu and exit.
+    \\  -r, --repl                Start the REPL.
+    \\  -e, --engine <engine>     Select the engine to use: 'bytecode' or 'eval' (default: 'eval')
+    \\  -i, --input  <input>      Evaluate code from the command line.
+    \\  <file>                    Evaluate code from a given file.
 ;
 
-const Engine = enum {
-    bytecode,
-    eval,
-};
+const Engine = enum { bytecode, eval };
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -39,8 +36,14 @@ pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
 
     const params = comptime clap.parseParamsComptime(Options);
+    // the parsers for the arguments
+    const parsers = comptime .{
+        .engine = clap.parsers.enumeration(Engine),
+        .input = clap.parsers.string,
+        .file = clap.parsers.string,
+    };
     var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+    var res = clap.parse(clap.Help, &params, &parsers, .{
         .diagnostic = &diag,
         .allocator = allocator,
     }) catch |err| {
@@ -50,14 +53,12 @@ pub fn main() !void {
     };
     defer res.deinit();
 
-    const engine: Engine = if (res.args.engine != null and std.mem.eql(u8, res.args.engine.?, "bytecode")) .bytecode else .eval;
-
     var environment = Evaluator.Environment.init(allocator);
     defer environment.deinit();
     var evaluator = Evaluator.init(allocator, &environment);
     // handle REPL separately
     if (res.args.repl != 0) {
-        if (engine == .bytecode) {
+        if (res.args.engine == .bytecode) {
             try stdout.print("Bytecode engine is not supported in REPL mode.\n", .{});
             return;
         }
@@ -78,7 +79,7 @@ pub fn main() !void {
         }
     };
 
-    if (engine == .bytecode) {
+    if (res.args.engine == .bytecode) {
         const result = try honey.runInVm(input, .{ .allocator = allocator });
         defer result.deinit();
 

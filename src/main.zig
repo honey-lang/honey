@@ -20,11 +20,17 @@ const Header =
 ;
 
 const Options =
-    \\  -h, --help          Display this help menu and exit.
-    \\  -r, --repl          Start the REPL.
-    \\  -i, --input <str>   Evaluate code from the command line.
-    \\  <str>               Evaluate code from a given file.
+    \\  -h, --help           Display this help menu and exit.
+    \\  -r, --repl           Start the REPL.
+    \\  -e, --engine <str>   Select the engine to use: 'bytecode' or 'eval' (default: 'eval')
+    \\  -i, --input  <str>   Evaluate code from the command line.
+    \\  <str>                Evaluate code from a given file.
 ;
+
+const Engine = enum {
+    bytecode,
+    eval,
+};
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -44,11 +50,17 @@ pub fn main() !void {
     };
     defer res.deinit();
 
+    const engine: Engine = if (res.args.engine != null and std.mem.eql(u8, res.args.engine.?, "bytecode")) .bytecode else .eval;
+
     var environment = Evaluator.Environment.init(allocator);
     defer environment.deinit();
     var evaluator = Evaluator.init(allocator, &environment);
     // handle REPL separately
     if (res.args.repl != 0) {
+        if (engine == .bytecode) {
+            try stdout.print("Bytecode engine is not supported in REPL mode.\n", .{});
+            return;
+        }
         try runRepl(&evaluator, allocator);
         return;
     }
@@ -65,11 +77,16 @@ pub fn main() !void {
             return;
         }
     };
+
+    if (engine == .bytecode) {
+        _ = try honey.runInVm(input, .{ .allocator = allocator });
+        return;
+    }
+
     _ = run(&evaluator, input, allocator) catch |err| {
         try stdout.print("An unexpected error occurred: {s}\n", .{@errorName(err)});
     };
 }
-
 fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator) !void {
     var repl = try Repl.init(allocator, 1024);
     defer repl.deinit();

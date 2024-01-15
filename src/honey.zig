@@ -3,7 +3,10 @@ const Lexer = @import("lexer/Lexer.zig");
 const TokenData = @import("lexer/token.zig").TokenData;
 const ast = @import("parser/ast.zig");
 const Parser = @import("parser/Parser.zig");
+const Compiler = @import("compiler/Compiler.zig");
+const Bytecode = @import("compiler/Bytecode.zig");
 const Evaluator = @import("evaluator/Evaluator.zig");
+const Vm = @import("vm/Vm.zig");
 
 pub const version = "0.0.1";
 
@@ -45,6 +48,41 @@ pub fn run(input: []const u8, options: RunOptions) !Result(?Evaluator.Value) {
     defer evaluator.deinit();
     return Result(?Evaluator.Value){
         .data = evaluator.run(result.data),
+        .arena = result.arena,
+    };
+}
+
+pub const CompileOptions = struct {
+    allocator: std.mem.Allocator,
+};
+
+pub fn compile(input: []const u8, options: CompileOptions) !Result(Bytecode) {
+    const result = try parse(input, .{ .allocator = options.allocator });
+    var arena = result.arena;
+    var compiler = Compiler.init(arena.allocator(), result.data);
+    return Result(Bytecode){
+        .data = try compiler.compile(),
+        .arena = result.arena,
+    };
+}
+
+pub const VmRunOptions = struct {
+    allocator: std.mem.Allocator,
+};
+
+pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(void) {
+    const result = try compile(input, .{ .allocator = options.allocator });
+    defer result.deinit();
+    std.debug.print("Bytecode:\n{s}\n", .{result.data});
+    var arena = result.arena;
+    var vm = Vm.init(result.data, arena.allocator());
+    defer vm.deinit();
+    vm.run() catch |err| {
+        vm.report();
+        return err;
+    };
+    return Result(void){
+        .data = {},
         .arena = result.arena,
     };
 }

@@ -137,7 +137,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const constant = try self.fetchConstant();
             try self.pushOrError(constant);
         },
-        .add, .sub, .mul, .div, .mod => try self.executeArithmetic(instruction),
+        .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
                 instruction.byte(),
@@ -239,21 +239,21 @@ fn popOrError(self: *Self) VmError!Value {
 
 /// Executes an arithmetic instruction
 fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
-    const first = try self.popOrError();
-    const second = try self.popOrError();
-    if (first != .number or second != .number) {
+    const rhs = try self.popOrError();
+    const lhs = try self.popOrError();
+    if (lhs != .number or rhs != .number) {
         // self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ first, second });
         return error.UnexpectedValueType;
     }
-    const result = switch (opcode) {
-        .add => first.number + second.number,
-        .sub => first.number - second.number,
-        .mul => first.number * second.number,
-        .div => first.number / second.number,
-        .mod => @mod(first.number, second.number),
-        else => unreachable,
-    };
-    try self.pushOrError(.{ .number = result });
+    try self.pushOrError(.{ .number = switch (opcode) {
+        .add => lhs.number + rhs.number,
+        .sub => lhs.number - rhs.number,
+        .mul => lhs.number * rhs.number,
+        .div => lhs.number / rhs.number,
+        .mod => @mod(lhs.number, rhs.number),
+        .pow => std.math.pow(NumberType, lhs.number, rhs.number),
+        inline else => unreachable,
+    } });
 }
 
 test "ensure program results in correct value" {

@@ -63,19 +63,26 @@ fn compileStatement(self: *Self, statement: ast.Statement) !void {
     }
 }
 
+/// Resolves an operator to its instruction equivalent
+inline fn resolveOpToInstr(operator: ast.Operator) opcodes.Instruction {
+    return switch (operator) {
+        .plus => .add,
+        .minus => .sub,
+        .star => .mul,
+        .slash => .div,
+        .modulo => .mod,
+        .doublestar => .pow,
+        inline else => @panic("Invalid operator"),
+    };
+}
+
+/// Compiles an expression to opcodes
 fn compileExpression(self: *Self, expression: ast.Expression) !void {
     switch (expression) {
         .binary => |inner| {
             try self.compileExpression(inner.lhs.*);
             try self.compileExpression(inner.rhs.*);
-            try self.addInstruction(switch (inner.operator) {
-                .plus => .add,
-                .minus => .sub,
-                .star => .mul,
-                .slash => .div,
-                .modulo => .mod,
-                inline else => unreachable,
-            });
+            try self.addInstruction(resolveOpToInstr(inner.operator));
         },
         .number => |value| {
             try self.constants.append(.{ .number = value });

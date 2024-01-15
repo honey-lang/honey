@@ -17,6 +17,8 @@ pub const Opcode = enum(u8) {
     div = 0x13,
     /// The `mod` opcode is used to calculate the remainder of two values.
     mod = 0x14,
+    /// The `pow` opcode is used to calculate the power of two values.
+    pow = 0x15,
     /// The halt opcode is used to halt execution.
     halt = 0xff,
 
@@ -64,6 +66,7 @@ pub const Instruction = union(Opcode) {
     mul: void,
     div: void,
     mod: void,
+    pow: void,
     halt: void,
 
     pub fn opcode(self: Instruction) Opcode {

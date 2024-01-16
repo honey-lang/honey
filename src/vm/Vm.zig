@@ -76,7 +76,7 @@ pub fn getLastPopped(self: *Self) ?Value {
 
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
-    while (self.running) {
+    while (self.program_counter < self.instructions.len) {
         const instruction = try self.fetchInstruction();
         try self.execute(instruction);
     }
@@ -101,7 +101,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),
         .eql, .neql => try self.executeLogical(instruction),
         .gt, .gt_eql, .lt, .lt_eql => try self.executeComparison(instruction),
-        .halt => self.running = false,
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
                 instruction.byte(),

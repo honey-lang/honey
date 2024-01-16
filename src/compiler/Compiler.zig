@@ -50,7 +50,6 @@ pub fn compile(self: *Self) !Bytecode {
     for (self.program.statements.items) |statement| {
         try self.compileStatement(statement);
     }
-    try self.addInstruction(.halt);
     return .{ .instructions = self.instructions.items, .constants = self.constants.items };
 }
 
@@ -62,6 +61,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) !void {
             // pop the result of the statement off the stack after it's done
             try self.addInstruction(.pop);
         },
+        .variable => {},
         else => @panic("unimplemented statement type"),
     }
 }

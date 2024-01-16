@@ -41,8 +41,6 @@ pub const Opcode = enum(u8) {
     @"and" = 0x30,
     /// The `or` opcode is used to check if either value is true.
     @"or" = 0x31,
-    /// The halt opcode is used to halt execution.
-    halt = 0xff,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -101,7 +99,6 @@ pub const Instruction = union(Opcode) {
     gt_eql: void,
     @"and": void,
     @"or": void,
-    halt: void,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;
@@ -154,7 +151,6 @@ test "ensure make outputs the correct program" {
         .{ .@"const" = 0x00 },
         .{ .@"const" = 0x01 },
         .add,
-        .halt,
     });
 
     // zig fmt: off
@@ -164,7 +160,6 @@ test "ensure make outputs the correct program" {
         Opcode.@"const".byte(),
         0x00, 0x01,
         Opcode.add.byte(),
-        Opcode.halt.byte(),
     }, program);
 }
 

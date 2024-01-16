@@ -122,7 +122,7 @@ test "test simple addition compilation" {
         .{ .@"const" = 0x00 },
         .{ .@"const" = 0x01 },
         .add,
-        .halt,
+        .pop,
     }), bytecode.instructions);
     try std.testing.expectEqualSlices(Value, &.{
         .{ .number = 1 },

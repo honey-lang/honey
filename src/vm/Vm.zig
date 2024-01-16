@@ -262,11 +262,11 @@ fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
 
 test "ensure program results in correct value" {
     const ally = std.testing.allocator;
-    const result = try honey.compile("1 + 2", .{ .allocator = ally });
+    const result = try honey.compile("1 + 2", .{ .allocator = ally, .error_writer = std.io.getStdErr().writer() });
     defer result.deinit();
     var vm = Self.init(result.data, ally);
     defer vm.deinit();
     try vm.run();
 
-    try std.testing.expectEqual(Value{ .number = 3 }, try vm.popOrError());
+    try std.testing.expectEqual(Value{ .number = 3 }, vm.getLastPopped().?);
 }

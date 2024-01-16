@@ -64,6 +64,7 @@ pub const ParserError = error{
     ExpectedCurrentMismatch,
     ExpectedPeekMismatch,
     ExpectedElseCondition,
+    EncounteredErrors,
 };
 
 const ErrorData = struct {
@@ -71,18 +72,15 @@ const ErrorData = struct {
     msg: []const u8,
 };
 
-pub const Diagnostics = struct {};
-
 const Self = @This();
 
 arena: std.heap.ArenaAllocator,
 cursor: utils.Cursor(TokenData),
 stderr: std.fs.File.Writer,
-diagnostics: ?*Diagnostics = null,
+diagnostics: utils.Diagnostics,
 
 const ParserOptions = struct {
     ally: std.mem.Allocator,
-    diagnostics: ?*Diagnostics = null,
 };
 
 /// Initializes the parser.
@@ -91,13 +89,14 @@ pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
         .arena = std.heap.ArenaAllocator.init(options.ally),
         .cursor = utils.Cursor(TokenData).init(tokens),
         .stderr = std.io.getStdErr().writer(),
-        .diagnostics = options.diagnostics,
+        .diagnostics = utils.Diagnostics.init(options.ally),
     };
 }
 
 /// Deinitializes the parser.
 pub fn deinit(self: *Self) void {
     self.arena.deinit();
+    self.diagnostics.deinit();
 }
 
 pub fn allocator(self: *Self) std.mem.Allocator {
@@ -111,17 +110,34 @@ fn moveToHeap(self: *Self, value: anytype) ParserError!*@TypeOf(value) {
     return ptr;
 }
 
-/// Prints the error message to stderr.
-fn err(self: *Self, comptime format: []const u8, args: anytype) void {
-    self.stderr.print(format ++ "\n", args) catch unreachable;
+/// Reports any errors that have occurred during execution to stderr
+pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
+    if (!self.diagnostics.hasErrors()) {
+        return;
+    }
+    error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
+    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
+    for (self.diagnostics.errors.items, 0..) |msg, index| {
+        error_writer.print(" - {s}", .{msg}) catch unreachable;
+        if (index < self.diagnostics.errors.items.len) {
+            error_writer.print("\n", .{}) catch unreachable;
+        }
+    }
+    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
 }
 
 /// Parses the tokens into an AST.
 pub fn parse(self: *Self) ParserError!Program {
     var program = Program.init(self.allocator());
     while (self.cursor.canRead()) {
-        const statement = try self.parseStatement() orelse continue;
-        try program.add(statement);
+        const statement = self.parseStatement() catch continue;
+        if (statement) |stmt| {
+            try program.add(stmt);
+        }
+    }
+
+    if (self.diagnostics.hasErrors()) {
+        return error.EncounteredErrors;
     }
     return program;
 }
@@ -208,7 +224,7 @@ fn parseFunctionParameters(self: *Self) ParserError![]const Expression {
     const expressions = try self.parseExpressionList(.left_paren, .right_paren);
     for (expressions) |expr| {
         if (expr != .identifier) {
-            self.err("expected identifier but got: {}", .{expr});
+            self.diagnostics.report("expected identifier but got: {}", .{expr});
             return error.UnexpectedToken;
         }
     }
@@ -264,7 +280,7 @@ fn parseIfBody(self: *Self) ParserError!ast.IfExpression.Body {
 
 fn parseIfExpression(self: *Self) ParserError!Expression {
     if (!self.currentIs(.@"if")) {
-        self.err("expected if but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected if but got: {}", .{self.currentToken()});
         return error.UnexpectedToken;
     }
 
@@ -335,7 +351,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
             break :blk parsed;
         },
         inline else => {
-            self.err("no prefix parse rule for token: {}", .{current.token});
+            self.diagnostics.report("no prefix parse rule for token: {}", .{current.token});
             return error.NoPrefixParseRule;
         },
     };
@@ -357,7 +373,7 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
 /// Parses a call expression using the given identifier as the name.
 fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
     if (expr.* != .identifier) {
-        self.err("expected identifier but got: {}", .{expr});
+        self.diagnostics.report("expected identifier but got: {}", .{expr});
         return error.UnexpectedToken;
     }
     // rewind the cursor to make sure we can use `parseExpressionList`
@@ -424,11 +440,11 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 /// Throws an error if the current token is not the expected tag.
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.err("expected current token: {} but got EOF", .{tag});
+        self.diagnostics.report("expected current token: {} but got EOF", .{tag});
         return error.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
-        self.err("expected current token: {} but got: {}", .{ tag, self.currentToken() });
+        self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() });
         return error.ExpectedCurrentMismatch;
     }
     self.cursor.advance();
@@ -437,11 +453,11 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
 /// Throws an error if the current token is not the expected tag.
 fn expectPeekAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.err("expected peek token: {} but got EOF", .{tag});
+        self.diagnostics.report("expected peek token: {} but got EOF", .{tag});
         return error.UnexpectedEOF;
     }
     if (!self.peekIs(tag)) {
-        self.err("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null });
+        self.diagnostics.report("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null });
         return error.ExpectedPeekMismatch;
     }
     self.cursor.advance();

@@ -76,7 +76,10 @@ pub fn main() !void {
     };
 
     if (res.args.engine == .bytecode) {
-        const result = try honey.runInVm(input, .{ .allocator = allocator });
+        const result = try honey.runInVm(input, .{
+            .allocator = allocator,
+            .error_writer = std.io.getStdOut().writer(),
+        });
         defer result.deinit();
 
         var vm = result.data;
@@ -102,7 +105,10 @@ fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator, engine: Engine) 
         switch (engine) {
             .bytecode => {
                 // runInVm will print the error for us
-                var result = honey.runInVm(input, .{ .allocator = allocator }) catch continue;
+                var result = honey.runInVm(input, .{
+                    .allocator = allocator,
+                    .error_writer = std.io.getStdOut().writer(),
+                }) catch continue;
                 defer result.deinit();
                 if (result.data.getLastPopped()) |value| {
                     try repl.getStdOut().print("Output: {s}\n", .{value});
@@ -122,7 +128,7 @@ fn runRepl(evaluator: *Evaluator, allocator: std.mem.Allocator, engine: Engine) 
 }
 
 inline fn run(evaluator: *Evaluator, input: []const u8, allocator: std.mem.Allocator) !?Evaluator.Value {
-    const result = try honey.parse(input, .{ .allocator = allocator });
+    const result = try honey.parse(input, .{ .allocator = allocator, .error_writer = std.io.getStdOut().writer() });
     defer result.deinit();
     return evaluator.run(result.data);
 }

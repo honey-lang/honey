@@ -19,7 +19,7 @@ pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) ![]const TokenD
 
 pub const ParseOptions = struct {
     allocator: std.mem.Allocator,
-    diagnostics: ?*Parser.Diagnostics = null,
+    error_writer: std.fs.File.Writer,
 };
 
 pub fn parse(input: []const u8, options: ParseOptions) !Result(ast.Program) {
@@ -30,8 +30,13 @@ pub fn parse(input: []const u8, options: ParseOptions) !Result(ast.Program) {
     var parser = Parser.init(tokens, .{ .ally = arena.allocator() });
     defer parser.deinit();
 
+    const data = parser.parse() catch |err| {
+        parser.report(options.error_writer);
+        return err;
+    };
+
     return Result(ast.Program){
-        .data = try parser.parse(),
+        .data = data,
         .arena = arena,
     };
 }
@@ -54,10 +59,14 @@ pub fn run(input: []const u8, options: RunOptions) !Result(?Evaluator.Value) {
 
 pub const CompileOptions = struct {
     allocator: std.mem.Allocator,
+    error_writer: std.fs.File.Writer,
 };
 
 pub fn compile(input: []const u8, options: CompileOptions) !Result(Bytecode) {
-    const result = try parse(input, .{ .allocator = options.allocator });
+    const result = try parse(input, .{
+        .allocator = options.allocator,
+        .error_writer = options.error_writer,
+    });
     var arena = result.arena;
     var compiler = Compiler.init(arena.allocator(), result.data);
     return Result(Bytecode){
@@ -68,16 +77,20 @@ pub fn compile(input: []const u8, options: CompileOptions) !Result(Bytecode) {
 
 pub const VmRunOptions = struct {
     allocator: std.mem.Allocator,
+    error_writer: std.fs.File.Writer,
 };
 
 pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(Vm) {
-    const result = try compile(input, .{ .allocator = options.allocator });
+    const result = try compile(input, .{
+        .allocator = options.allocator,
+        .error_writer = options.error_writer,
+    });
     defer result.deinit();
 
     var arena = std.heap.ArenaAllocator.init(options.allocator);
     var vm = Vm.init(result.data, arena.allocator());
     vm.run() catch |err| {
-        vm.report();
+        vm.report(options.error_writer);
         return err;
     };
     return Result(Vm){ .data = vm, .arena = arena };

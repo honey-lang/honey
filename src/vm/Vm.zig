@@ -36,42 +36,12 @@ const VmError = error{
     UnexpectedValueType,
 };
 
-const Diagnostics = struct {
-    /// The allocator used for printing error messages
-    ally: std.mem.Allocator,
-    /// The last error message
-    errors: std.ArrayList([]const u8),
-
-    pub fn init(ally: std.mem.Allocator) Diagnostics {
-        return .{ .ally = ally, .errors = std.ArrayList([]const u8).init(ally) };
-    }
-
-    /// Deinitializes the diagnostics
-    pub fn deinit(self: *Diagnostics) void {
-        for (self.errors.items) |msg| {
-            self.ally.free(msg);
-        }
-        self.errors.deinit();
-    }
-
-    /// Returns whether an error has been reported
-    pub fn hasErrors(self: *Diagnostics) bool {
-        return self.errors.items.len > 0;
-    }
-
-    /// Reports an error
-    pub fn report(self: *Diagnostics, comptime fmt: []const u8, args: anytype) void {
-        const msg = std.fmt.allocPrint(self.ally, fmt ++ "\n", args) catch @panic("Failed to allocate error message");
-        self.errors.append(msg) catch @panic("Failed to append error message");
-    }
-};
-
 /// The instructions to run in the VM
 instructions: []const u8,
 /// The constants to use in the VM
 constants: []const Value,
 /// Diagnostics for the VM
-diagnostics: Diagnostics,
+diagnostics: utils.Diagnostics,
 /// Whether the VM is running or not
 running: bool = true,
 /// Where the program is currently executing
@@ -88,7 +58,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator) Self {
     return Self{
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
-        .diagnostics = Diagnostics.init(ally),
+        .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
     };
 }
@@ -97,25 +67,6 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator) Self {
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
     self.diagnostics.deinit();
-}
-
-/// Dumps the list of instructions to a hexdump
-pub fn dump(self: *Self) void {
-    const max_per_line = 16;
-    // line length is 3 chars per byte + 1 for the space
-    const line = "-" ** (max_per_line * 3 + 1) ++ "\n";
-    std.debug.print("\n" ++ line, .{});
-    for (self.instructions, 0..) |byte, index| {
-        std.debug.print(HexFormat, .{byte});
-
-        if (index % max_per_line == max_per_line - 1 or index == self.instructions.len - 1) {
-            std.debug.print("\n", .{});
-            continue;
-        } else {
-            std.debug.print(" ", .{});
-        }
-    }
-    std.debug.print(line, .{});
 }
 
 /// Returns the last value popped from the stack
@@ -163,20 +114,19 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn report(self: *Self) void {
+pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    const stdout = std.io.getStdErr().writer();
-    stdout.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
-    stdout.print("--------------------------------------------------\n", .{}) catch unreachable;
+    error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
+    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
     for (self.diagnostics.errors.items, 0..) |msg, index| {
-        stdout.print(" - {s}", .{msg}) catch unreachable;
-        if (index < self.diagnostics.errors.items.len - 1) {
-            stdout.print("\n", .{}) catch unreachable;
+        error_writer.print(" - {s}", .{msg}) catch unreachable;
+        if (index < self.diagnostics.errors.items.len) {
+            error_writer.print("\n", .{}) catch unreachable;
         }
     }
-    stdout.print("--------------------------------------------------\n", .{}) catch unreachable;
+    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
 }
 
 /// Fetches the next byte from the program

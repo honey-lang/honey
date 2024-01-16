@@ -1,6 +1,7 @@
 const std = @import("std");
 pub const bytes = @import("bytes.zig");
 pub const Cursor = @import("cursor.zig").Cursor;
+pub const Diagnostics = @import("Diagnostics.zig");
 pub const fmt = @import("fmt.zig");
 pub const Position = @import("Position.zig");
 pub const Repl = @import("Repl.zig");

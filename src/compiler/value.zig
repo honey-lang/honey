@@ -1,5 +1,4 @@
 const std = @import("std");
-const codec = @import("../utils/codec.zig");
 
 pub const Value = union(enum) {
     pub const True = Value{ .boolean = true };

@@ -10,6 +10,8 @@ const Statement = ast.Statement;
 const Expression = ast.Expression;
 const Operator = ast.Operator;
 
+const utils = @import("../utils/utils.zig");
+
 pub const Precedence = enum {
     lowest,
     logical,
@@ -72,10 +74,9 @@ const ErrorData = struct {
 pub const Diagnostics = struct {};
 
 const Self = @This();
-pub const Cursor = @import("../utils/Cursor.zig").Cursor(TokenData);
 
 arena: std.heap.ArenaAllocator,
-cursor: Cursor,
+cursor: utils.Cursor(TokenData),
 stderr: std.fs.File.Writer,
 diagnostics: ?*Diagnostics = null,
 
@@ -88,7 +89,7 @@ const ParserOptions = struct {
 pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(options.ally),
-        .cursor = Cursor.init(tokens),
+        .cursor = utils.Cursor(TokenData).init(tokens),
         .stderr = std.io.getStdErr().writer(),
         .diagnostics = options.diagnostics,
     };

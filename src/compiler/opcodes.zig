@@ -1,6 +1,4 @@
 const std = @import("std");
-const codec = @import("../utils/codec.zig");
-const Value = @import("value.zig");
 
 pub const Opcode = enum(u8) {
     /// The `return` opcode is used to return from a function.
@@ -110,6 +108,21 @@ pub const Instruction = union(Opcode) {
     }
 };
 
+/// Encodes the given value into a byte array.
+pub fn encode(value: anytype, writer: anytype) !void {
+    const ValueType = @TypeOf(value);
+    const value_type_info = @typeInfo(ValueType);
+    switch (value_type_info) {
+        .Int => try writer.writeInt(ValueType, value, .big),
+        .Float => {
+            const value_bytes = @as([@sizeOf(value)]u8, @bitCast(value));
+            try writer.writeAll(&value_bytes);
+        },
+        .Void => {},
+        inline else => @panic("Unsupported type"),
+    }
+}
+
 /// Creates a program from the given instructions.
 /// This is an inline function, so the byte array will not go out of scope when the function returns.
 pub inline fn make(comptime instructions: []const Instruction) []u8 {
@@ -130,7 +143,7 @@ pub inline fn make(comptime instructions: []const Instruction) []u8 {
         const opcode: Opcode = comptime std.meta.activeTag(instruction);
         opcode.encode(writer) catch @panic("Failed to encode opcode");
         switch (instruction) {
-            inline else => |value| codec.encode(value, writer) catch @panic("Failed to encode instruction"),
+            inline else => |value| encode(value, writer) catch @panic("Failed to encode instruction"),
         }
     }
     return &make_buf;

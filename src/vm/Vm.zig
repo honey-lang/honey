@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("../utils/utils.zig");
 const honey = @import("../honey.zig");
 
 const Compiler = @import("../compiler/Compiler.zig");
@@ -6,8 +7,6 @@ const opcodes = @import("../compiler/opcodes.zig");
 const Opcode = opcodes.Opcode;
 const Bytecode = @import("../compiler/Bytecode.zig");
 const Value = @import("../compiler/value.zig").Value;
-const Stack = @import("../utils/stack.zig").Stack;
-const byte_utils = @import("../utils/bytes.zig");
 
 const Self = @This();
 
@@ -80,7 +79,7 @@ program_counter: usize = 0,
 /// The stack pointer
 stack_pointer: usize = 0,
 /// The stack itself
-stack: Stack(Value),
+stack: utils.Stack(Value),
 /// Holds the last value popped from the stack
 last_popped: ?Value = null,
 
@@ -90,7 +89,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator) Self {
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
         .diagnostics = Diagnostics.init(ally),
-        .stack = Stack(Value).init(ally),
+        .stack = utils.Stack(Value).init(ally),
     };
 }
 
@@ -220,7 +219,7 @@ fn fetchNumber(self: *Self, comptime T: type) VmError!T {
     const bytes = try self.fetchAmount(@sizeOf(T));
     return switch (type_info) {
         .Int => std.mem.readInt(T, bytes[0..@sizeOf(T)], .big),
-        .Float => byte_utils.bytesToFloat(T, bytes, .big),
+        .Float => utils.bytes.bytesToFloat(T, bytes, .big),
         inline else => unreachable,
     };
 }
@@ -253,8 +252,8 @@ fn popOrError(self: *Self) VmError!Value {
 }
 
 /// Pops `N` values from the stack or reports and returns an error
-fn popCountOrError(self: *Self, comptime N: comptime_int) VmError!RepeatedTuple(Value, N) {
-    var tuple: RepeatedTuple(Value, N) = undefined;
+fn popCountOrError(self: *Self, comptime N: comptime_int) VmError!utils.RepeatedTuple(Value, N) {
+    var tuple: utils.RepeatedTuple(Value, N) = undefined;
     inline for (0..N) |index| {
         @field(tuple, std.fmt.comptimePrint("{d}", .{index})) = try self.popOrError();
     }
@@ -310,11 +309,6 @@ fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
         inline else => unreachable,
     };
     try self.pushOrError(if (result) Value.True else Value.False);
-}
-
-/// Returns a tuple of `N` elements, all of type `T`.
-pub fn RepeatedTuple(comptime T: type, comptime N: comptime_int) type {
-    return std.meta.Tuple(&[_]type{T} ** N);
 }
 
 test "ensure program results in correct value" {

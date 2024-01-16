@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("../utils/utils.zig");
 const Token = @import("token.zig").Token;
 const TokenData = @import("token.zig").TokenData;
 
@@ -20,14 +21,13 @@ const KeywordMap = std.ComptimeStringMap(Token, .{
     .{ "and", .@"and" },
 });
 
-pub const Cursor = @import("../utils/cursor.zig").Cursor(u8);
 const Self = @This();
 
 tokens: std.ArrayList(TokenData),
-cursor: Cursor,
+cursor: utils.Cursor(u8),
 
 pub fn init(input: []const u8, allocator: std.mem.Allocator) Self {
-    return .{ .tokens = std.ArrayList(TokenData).init(allocator), .cursor = Cursor.init(input) };
+    return .{ .tokens = std.ArrayList(TokenData).init(allocator), .cursor = utils.Cursor(u8).init(input) };
 }
 
 pub fn deinit(self: *Self) void {

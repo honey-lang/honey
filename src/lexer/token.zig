@@ -1,5 +1,5 @@
 const std = @import("std");
-const Position = @import("../utils/Position.zig");
+const utils = @import("../utils/utils.zig");
 
 pub const TokenTag = enum {
     /// .number represents an unparsed number (e.g. "123")
@@ -159,7 +159,7 @@ pub const Token = union(TokenTag) {
 
 pub const TokenData = struct {
     token: Token,
-    position: Position,
+    position: utils.Position,
 
     pub fn create(token: Token, start: usize, end: usize) TokenData {
         return .{

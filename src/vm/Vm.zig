@@ -101,6 +101,14 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),
         .eql, .neql => try self.executeLogical(instruction),
         .gt, .gt_eql, .lt, .lt_eql => try self.executeComparison(instruction),
+        .neg => {
+            const value = try self.popOrError();
+            if (value != .number) {
+                self.diagnostics.report("Attempted to negate non-number value: {s}", .{value});
+                return error.UnexpectedValueType;
+            }
+            try self.pushOrError(.{ .number = -value.number });
+        },
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
                 instruction.byte(),
@@ -234,14 +242,13 @@ fn executeComparison(self: *Self, opcode: Opcode) VmError!void {
         return error.UnexpectedValueType;
     }
 
-    const result = switch (opcode) {
+    try self.pushOrError(nativeBoolToValue(switch (opcode) {
         .gt => lhs.number > rhs.number,
         .gt_eql => lhs.number >= rhs.number,
         .lt => lhs.number < rhs.number,
         .lt_eql => lhs.number <= rhs.number,
         inline else => unreachable,
-    };
-    try self.pushOrError(if (result) Value.True else Value.False);
+    }));
 }
 
 /// Executes a logical instruction
@@ -252,12 +259,15 @@ fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
         return error.UnexpectedValueType;
     }
 
-    const result = switch (opcode) {
+    try self.pushOrError(nativeBoolToValue(switch (opcode) {
         .eql => lhs.number == rhs.number,
         .neql => lhs.number != rhs.number,
         inline else => unreachable,
-    };
-    try self.pushOrError(if (result) Value.True else Value.False);
+    }));
+}
+
+inline fn nativeBoolToValue(value: bool) Value {
+    return if (value) Value.True else Value.False;
 }
 
 test "ensure program results in correct value" {

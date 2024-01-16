@@ -66,8 +66,15 @@ fn compileStatement(self: *Self, statement: ast.Statement) !void {
     }
 }
 
+inline fn resolvePrefixToInstr(operator: ast.Operator) opcodes.Instruction {
+    return switch (operator) {
+        .minus => .neg,
+        inline else => utils.fmt.panicWithFormat("unexpected operator: {s}", .{operator}),
+    };
+}
+
 /// Resolves an operator to its instruction equivalent
-inline fn resolveOpToInstr(operator: ast.Operator) opcodes.Instruction {
+inline fn resolveInfixToInstr(operator: ast.Operator) opcodes.Instruction {
     return switch (operator) {
         .plus => .add,
         .minus => .sub,
@@ -91,7 +98,11 @@ fn compileExpression(self: *Self, expression: ast.Expression) !void {
         .binary => |inner| {
             try self.compileExpression(inner.lhs.*);
             try self.compileExpression(inner.rhs.*);
-            try self.addInstruction(resolveOpToInstr(inner.operator));
+            try self.addInstruction(resolveInfixToInstr(inner.operator));
+        },
+        .prefix => |inner| {
+            try self.compileExpression(inner.rhs.*);
+            try self.addInstruction(resolvePrefixToInstr(inner.operator));
         },
         .number => |value| {
             try self.constants.append(.{ .number = value });

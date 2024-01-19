@@ -110,6 +110,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) !void {
         },
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
+        .@"if" => {},
         inline else => utils.fmt.panicWithFormat("unexpected expression type: {s}", .{expression}),
     }
 }

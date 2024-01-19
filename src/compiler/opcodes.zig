@@ -9,7 +9,7 @@ pub const Opcode = enum(u8) {
     identifier = 0x02,
     /// The `pop` opcode is used to pop a value from the stack.
     pop = 0x03,
-    /// The `true opcode is used to push a true value onto the stack.
+    /// The `true` opcode is used to push a true value onto the stack.
     true = 0x10,
     /// The `false` opcode is used to push a false value onto the stack.
     false = 0x11,
@@ -45,6 +45,10 @@ pub const Opcode = enum(u8) {
     @"and" = 0x40,
     /// The `or` opcode is used to check if either value is true.
     @"or" = 0x41,
+    /// The `jump` opcode is used to jump to a specific instruction.
+    jump = 0x50,
+    /// The `jump_if_true` opcode is used to jump to a specific instruction if the value is true.
+    jump_if_true = 0x51,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -105,6 +109,8 @@ pub const Instruction = union(Opcode) {
     gt_eql: void,
     @"and": void,
     @"or": void,
+    jump: u16,
+    jump_if_true: u16,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

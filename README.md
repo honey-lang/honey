@@ -4,7 +4,7 @@ The official repository for the Honey programming language.
 ## examples
 
 ### the basics
-```zig
+```ts
 // create greeting
 let greeting = "Hello";
 

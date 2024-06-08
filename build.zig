@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     if (target.result.isWasm()) {
         const lib = b.addSharedLibrary(.{
             .name = "honey",
-            .root_source_file = .{ .path = "src/wasm.zig" },
+            .root_source_file = b.path("src/wasm.zig"),
             .target = target,
             .optimize = .ReleaseSmall,
             .version = .{ .major = 0, .minor = 0, .patch = 1 },
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
     });
     const exe = b.addExecutable(.{
         .name = "honey",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
 
     // Step for running unit tests
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/tests.zig" },
+        .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -61,7 +61,7 @@ pub fn build(b: *std.Build) void {
     // Step for generating markdown documentation
     const generate_md = b.addExecutable(.{
         .name = "generate-md",
-        .root_source_file = .{ .path = "src/compiler/generate_md.zig" },
+        .root_source_file = b.path("src/compiler/generate_md.zig"),
         .target = target,
         .optimize = optimize,
     });

@@ -6,7 +6,7 @@ const Evaluator = @import("Evaluator.zig");
 pub fn rand(_: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {
     var prng = std.rand.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
-        std.os.getrandom(std.mem.asBytes(&seed)) catch return error.GetRandomFailed;
+        std.posix.getrandom(std.mem.asBytes(&seed)) catch return error.GetRandomFailed;
         break :blk seed;
     });
     const random = prng.random();

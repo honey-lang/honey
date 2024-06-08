@@ -6,7 +6,7 @@ const TokenData = @import("token.zig").TokenData;
 /// The character used to denote a builtin function
 const BuiltinChar = '@';
 /// A map of keywords to their respective tokens
-const KeywordMap = std.ComptimeStringMap(Token, .{
+const KeywordMap = std.StaticStringMap(Token).initComptime(.{
     .{ "let", .let },
     .{ "const", .@"const" },
     .{ "fn", .@"fn" },

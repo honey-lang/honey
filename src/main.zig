@@ -134,5 +134,5 @@ inline fn run(evaluator: *Evaluator, input: []const u8, allocator: std.mem.Alloc
 }
 
 pub fn exit() !void {
-    std.os.exit(0);
+    std.posix.exit(0);
 }

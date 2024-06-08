@@ -3,9 +3,9 @@
     .version = "0.0.1",
     .dependencies = .{
         .clap = .{
-            .url = "https://github.com/Hejsil/zig-clap/archive/9c23bcb5aebe0c2542b4de4472f60959974e2222.tar.gz",
-            .hash = "12209e829da9d7d0bc089e4e0cbc07bb882f6192cd583277277da34df53cd05b8f2a",
+            .url = "https://github.com/Hejsil/zig-clap/archive/master.tar.gz",
+            .hash = "12205eb22c644df2469045083efe9c92189d56494ebe8901b36ef1218c3717e6eb78",
         },
     },
-    .paths = .{"."},
+    .paths = .{""},
 }

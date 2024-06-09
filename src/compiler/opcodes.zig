@@ -5,10 +5,13 @@ pub const Opcode = enum(u8) {
     @"return" = 0x00,
     /// The `const` opcode is used to push a constant value onto the stack.
     @"const" = 0x01,
-    /// The `identifier` opcode is used to resolve an identifier and push it onto the stack.
-    identifier = 0x02,
     /// The `pop` opcode is used to pop a value from the stack.
-    pop = 0x03,
+    pop = 0x02,
+    /// The `jump` opcode is used to jump to an instruction.
+    jump = 0x03,
+    /// The `jump_if_false` opcode is used to jump to an instruction if the top of the stack is false.
+    /// The top of the stack is popped.
+    jump_if_false = 0x04,
     /// The `true` opcode is used to push a true value onto the stack.
     true = 0x10,
     /// The `false` opcode is used to push a false value onto the stack.
@@ -45,11 +48,8 @@ pub const Opcode = enum(u8) {
     @"and" = 0x40,
     /// The `or` opcode is used to check if either value is true.
     @"or" = 0x41,
-    /// The `jump` opcode is used to jump to a specific instruction.
-    jump = 0x50,
-    /// The `jump_if_true` opcode is used to jump to a specific instruction if the value is true.
-    jump_if_true = 0x51,
-
+    /// The `not` opcode is used to negate a value (e.g., `!true`).
+    not = 0x42,
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
         return @intFromEnum(self);
@@ -89,8 +89,9 @@ pub const Opcode = enum(u8) {
 pub const Instruction = union(Opcode) {
     @"return": void,
     @"const": u16,
-    identifier: u16,
     pop: void,
+    jump: u16,
+    jump_if_false: u16,
     true: void,
     false: void,
     null: void,
@@ -109,8 +110,7 @@ pub const Instruction = union(Opcode) {
     gt_eql: void,
     @"and": void,
     @"or": void,
-    jump: u16,
-    jump_if_true: u16,
+    not: void,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

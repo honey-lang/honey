@@ -3,8 +3,9 @@ const utils = @import("../utils/utils.zig");
 const Token = @import("token.zig").Token;
 const TokenData = @import("token.zig").TokenData;
 
+/// The character used to denote a builtin function
 const BuiltinChar = '@';
-
+/// A map of keywords to their respective tokens
 const KeywordMap = std.ComptimeStringMap(Token, .{
     .{ "let", .let },
     .{ "const", .@"const" },
@@ -23,7 +24,9 @@ const KeywordMap = std.ComptimeStringMap(Token, .{
 
 const Self = @This();
 
+/// A list of generated tokens from the lexer
 tokens: std.ArrayList(TokenData),
+/// The current position of the lexer
 cursor: utils.Cursor(u8),
 
 pub fn init(input: []const u8, allocator: std.mem.Allocator) Self {
@@ -34,6 +37,7 @@ pub fn deinit(self: *Self) void {
     self.tokens.deinit();
 }
 
+/// Reads as many tokens as possible from the current position
 pub fn readAll(self: *Self) ![]const TokenData {
     while (self.read()) |token| {
         try self.tokens.append(token);
@@ -66,13 +70,16 @@ pub fn read(self: *Self) ?TokenData {
     };
 }
 
-fn skipWhitespace(self: *Self) void {
+/// Skips all whitespace from the current position
+inline fn skipWhitespace(self: *Self) void {
     _ = self.cursor.readWhile(std.ascii.isWhitespace);
 }
 
 // Reads tokens from a map of characters to tokens or a fallback if no match was found
 const TokenCharMap = struct { u8, Token };
-fn readCharMap(self: *Self, comptime map: []const TokenCharMap, fallback: Token) Token {
+
+/// Attempts to read a token from a map of characters to tokens or a fallback if no match was found
+inline fn readCharMap(self: *Self, comptime map: []const TokenCharMap, fallback: Token) Token {
     const next = self.cursor.peek() orelse return fallback;
     inline for (map) |entry| {
         const key, const value = entry;
@@ -117,6 +124,7 @@ fn readChar(self: *Self) ?TokenData {
         '}' => .right_brace,
         ',' => .comma,
         ';' => .semicolon,
+        // if we don't have a match, we return null from the function
         else => return null,
     };
 

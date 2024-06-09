@@ -99,7 +99,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .null => try self.pushOrError(Value.Null),
         .pop => _ = try self.popOrError(),
         .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),
-        .eql, .neql => try self.executeLogical(instruction),
+        .eql, .neql, .@"and", .@"or" => try self.executeLogical(instruction),
         .gt, .gt_eql, .lt, .lt_eql => try self.executeComparison(instruction),
         .neg => {
             const value = try self.popOrError();
@@ -108,6 +108,14 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 return error.UnexpectedValueType;
             }
             try self.pushOrError(.{ .number = -value.number });
+        },
+        .not => {
+            const value = try self.popOrError();
+            if (value != .boolean) {
+                self.diagnostics.report("Attempted to negate non-boolean value: {s}", .{value});
+                return error.UnexpectedValueType;
+            }
+            try self.pushOrError(nativeBoolToValue(!value.boolean));
         },
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
@@ -166,6 +174,7 @@ fn fetchAmount(self: *Self, count: usize) VmError![]const u8 {
     return self.instructions[self.program_counter..end];
 }
 
+/// Fetches a number from the program
 fn fetchNumber(self: *Self, comptime T: type) VmError!T {
     const type_info = @typeInfo(T);
     const type_size = @sizeOf(T);
@@ -254,18 +263,36 @@ fn executeComparison(self: *Self, opcode: Opcode) VmError!void {
 /// Executes a logical instruction
 fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
     const rhs, const lhs = try self.popCountOrError(2);
-    if (lhs != .number or rhs != .number) {
-        self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ lhs, rhs });
-        return error.UnexpectedValueType;
-    }
+    const result = nativeBoolToValue(switch (opcode) {
+        .@"and", .@"or" => blk: {
+            if (lhs != .boolean or rhs != .boolean) {
+                self.diagnostics.report("Attempted to perform arithmetic on non-boolean values: {s} and {s}", .{ lhs, rhs });
+                return error.UnexpectedValueType;
+            }
+            break :blk switch (opcode) {
+                .@"and" => lhs.boolean and rhs.boolean,
+                .@"or" => lhs.boolean or rhs.boolean,
+                inline else => unreachable,
+            };
+        },
+        .eql, .neql => blk: {
+            if (lhs != .number or rhs != .number) {
+                self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ lhs, rhs });
+                return error.UnexpectedValueType;
+            }
 
-    try self.pushOrError(nativeBoolToValue(switch (opcode) {
-        .eql => lhs.number == rhs.number,
-        .neql => lhs.number != rhs.number,
+            break :blk switch (opcode) {
+                .eql => lhs.number == rhs.number,
+                .neql => lhs.number != rhs.number,
+                inline else => unreachable,
+            };
+        },
         inline else => unreachable,
-    }));
+    });
+    try self.pushOrError(result);
 }
 
+/// Converts a native boolean to the value constant equivalent
 inline fn nativeBoolToValue(value: bool) Value {
     return if (value) Value.True else Value.False;
 }

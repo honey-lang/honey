@@ -4,7 +4,8 @@ const ast = @import("../parser/ast.zig");
 const Program = ast.Program;
 const Statement = ast.Statement;
 const Expression = ast.Expression;
-const Store = @import("../utils/store.zig").Store;
+
+const utils = @import("../utils/utils.zig");
 
 pub const Value = @import("value.zig").Value;
 pub const Function = @import("Function.zig");
@@ -12,17 +13,17 @@ pub const Function = @import("Function.zig");
 const Self = @This();
 
 pub const Environment = struct {
-    variables: Store(Value),
-    constants: Store(Value),
-    functions: Store(Function),
+    variables: utils.Store(Value),
+    constants: utils.Store(Value),
+    functions: utils.Store(Function),
     parent: ?*Environment = null,
 
     /// Initializes an environment without a parent.
     pub fn init(ally: std.mem.Allocator) Environment {
         return .{
-            .variables = Store(Value).init(ally),
-            .constants = Store(Value).init(ally),
-            .functions = Store(Function).init(ally),
+            .variables = utils.Store(Value).init(ally),
+            .constants = utils.Store(Value).init(ally),
+            .functions = utils.Store(Function).init(ally),
         };
     }
 
@@ -312,7 +313,7 @@ fn runExpression(self: *Self, expression: Expression, options: RunOptions) anyer
         .string => |value| .{ .string = value },
         .boolean => |value| if (value) Value.True else Value.False,
         .null => Value.Null,
-        .@"if" => |inner| try self.runIfExpression(inner, options),
+        .if_expr => |inner| try self.runIfExpression(inner, options),
         .@"while" => |inner| try self.runWhileExpression(inner, options),
         .builtin => |inner| try self.runBuiltinExpression(inner, options),
         .call => |inner| try self.runCallExpression(inner, options),
@@ -347,6 +348,7 @@ fn runBinaryExpression(self: *Self, expression: ast.BinaryExpression, options: R
         .greater_than_equal => try left.greaterThanEqual(right),
         .less_than => try left.lessThan(right),
         .less_than_equal => try left.lessThanEqual(right),
+        inline else => utils.fmt.panicWithFormat("invalid binary operator: {s}", .{expression.operator}),
     };
 }
 
@@ -355,7 +357,7 @@ fn runPrefixExpression(self: *Self, expression: ast.PrefixExpression, options: R
     return switch (expression.operator) {
         .plus => .{ .number = right.number },
         .minus => .{ .number = -right.number },
-        inline else => @panic("invalid prefix operator"),
+        inline else => utils.fmt.panicWithFormat("invalid prefix operator: {s}", .{expression.operator}),
     };
 }
 

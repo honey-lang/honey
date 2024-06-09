@@ -3,20 +3,38 @@ const Token = @import("../lexer/token.zig").Token;
 const TokenData = @import("../lexer/token.zig").TokenData;
 
 pub const Operator = enum {
+    /// `plus` is the `+` operator. It adds two numbers together.
     plus,
+    /// `minus` is the `-` operator. It subtracts two numbers.
     minus,
+    /// `star` is the `*` operator. It multiplies two numbers.
     star,
+    /// `slash` is the `/` operator. It divides two numbers.
     slash,
+    /// `modulo` is the `%` operator. It gets the remainder of two numbers.
     modulo,
+    /// `doublestar` is the `**` operator. It raises a number to the power of another number.
     doublestar,
+    /// `or` is the `or` operator.
+    /// If either the first or second operand is true, the result is true.
     @"or",
+    /// `and` is the `and` operator.
+    /// If both the first and second operand are true, the result is true.
     @"and",
+    /// `equal` is the `==` operator. It checks if two values are equal.
     equal,
+    /// `not_equal` is the `!=` operator. It checks if two values are not equal.
     not_equal,
+    /// `greater_than` is the `>` operator. It checks if the first value is greater than the second value.
     greater_than,
+    /// `greater_than_equal` is the `>=` operator. It checks if the first value is greater than or equal to the second value.
     greater_than_equal,
+    /// `less_than` is the `<` operator. It checks if the first value is less than the second value.
     less_than,
+    /// `less_than_equal` is the `<=` operator. It checks if the first value is less than or equal to the second value.
     less_than_equal,
+    /// `not` is the `!` operator. It negates a boolean value.
+    not,
 
     pub fn fromTokenData(data: TokenData) !Operator {
         return switch (data.token) {
@@ -34,6 +52,7 @@ pub const Operator = enum {
             .greater_than_equal => .greater_than_equal,
             .less_than => .less_than,
             .less_than_equal => .less_than_equal,
+            .bang => .not,
             else => error.InvalidOperator,
         };
     }
@@ -54,6 +73,7 @@ pub const Operator = enum {
             .greater_than_equal => try writer.writeAll(">="),
             .less_than => try writer.writeAll("<"),
             .less_than_equal => try writer.writeAll("<="),
+            .not => try writer.writeAll("!"),
         }
     }
 };
@@ -246,7 +266,8 @@ pub const Expression = union(enum) {
     /// A binary expression, such as `1 + 2`, `3 * 4`, or `5 / 6`.
     binary: BinaryExpression,
     /// An if expression, such as `if (true) { 1 } else { 2 }`.
-    @"if": IfExpression,
+    /// TODO: Rename back to @"if" when ZLS fixes the bug with @"" identifiers.
+    if_expr: IfExpression,
     /// A while expression, such as `while (true) { doSomething(); }`.
     @"while": WhileExpression,
     /// A builtin expression, such as `@print("Hello, world!")`.
@@ -267,7 +288,7 @@ pub const Expression = union(enum) {
             .null => writer.writeAll("null"),
             .prefix => |inner| writer.print("({s}{s})", .{ inner.operator, inner.rhs }),
             .binary => |inner| writer.print("({s} {s} {s})", .{ inner.lhs, inner.operator, inner.rhs }),
-            .@"if" => |inner| {
+            .if_expr => |inner| {
                 try writer.writeAll("if (");
                 for (inner.condition_list, 0..) |condition, index| {
                     try writer.print("{s}) {s}", .{ condition.condition, condition.body });
@@ -328,7 +349,7 @@ pub fn createBinaryStatement(lhs: *Expression, operator: Operator, rhs: *Express
 }
 
 pub fn createIfStatement(condition_list: []const IfExpression.ConditionData, alternative: ?IfExpression.Body, terminated: bool) Statement {
-    return .{ .expression = .{ .expression = .{ .@"if" = .{ .condition_list = condition_list, .alternative = alternative } }, .terminated = terminated } };
+    return .{ .expression = .{ .expression = .{ .if_expr = .{ .condition_list = condition_list, .alternative = alternative } }, .terminated = terminated } };
 }
 
 pub fn createWhileStatement(condition: *Expression, body: BlockStatement, terminated: bool) Statement {

@@ -26,5 +26,6 @@
 | `gt_eql`       | 0x35   | void     |
 | `and`          | 0x40   | void     |
 | `or`           | 0x41   | void     |
+| `not`          | 0x42   | void     |
 | `jump`         | 0x50   | u16      |
 | `jump_if_true` | 0x51   | u16      |

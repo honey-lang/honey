@@ -306,7 +306,7 @@ fn parseIfExpression(self: *Self) ParserError!Expression {
         break :blk try self.parseIfBody();
     };
 
-    return .{ .@"if" = .{
+    return .{ .if_expr = .{
         .condition_list = condition_list.toOwnedSlice() catch return error.OutOfMemory,
         .alternative = alternative,
     } };
@@ -325,7 +325,7 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
 fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
     const current = try self.readAndAdvance();
     return switch (current.token) {
-        .plus, .minus, .@"or", .@"and", .equal => blk: {
+        .plus, .minus, .bang => blk: {
             const operator = Operator.fromTokenData(current) catch return error.UnexpectedToken;
             const parsed = try self.parseExpression(.prefix);
             const rhs = try self.moveToHeap(parsed);

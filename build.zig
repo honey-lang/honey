@@ -3,7 +3,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
     // create exports for the wasm target
     if (target.result.isWasm()) {
         const lib = b.addSharedLibrary(.{
@@ -32,6 +31,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // exe.use_lld = false;
+    // exe.use_llvm = false;
     exe.root_module.addImport("clap", clap.module("clap"));
 
     b.installArtifact(exe);

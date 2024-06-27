@@ -55,6 +55,11 @@ pub const Opcode = enum(u8) {
         return @intFromEnum(self);
     }
 
+    /// Returns the size of the opcode with its operands;
+    pub fn size(self: Opcode) usize {
+        return self.width() + 1;
+    }
+
     /// Returns the width of the opcode.
     pub fn width(self: Opcode) usize {
         return switch (self) {
@@ -128,13 +133,14 @@ pub fn encode(value: anytype, writer: anytype) !void {
             try writer.writeAll(&value_bytes);
         },
         .Void => {},
-        inline else => @panic("Unsupported type"),
+        inline else => @panic("Unsupported type: " ++ @typeName(ValueType)),
     }
 }
 
 /// Creates a program from the given instructions.
 /// This is an inline function, so the byte array will not go out of scope when the function returns.
-pub inline fn make(comptime instructions: []const Instruction) []u8 {
+pub inline fn make(comptime instructions: []const Instruction) []const u8 {
+    // compute the size of the program at comptime
     comptime var size: usize = 0;
     inline for (instructions) |instruction| {
         // size of the opcode + size of the instruction

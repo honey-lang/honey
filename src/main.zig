@@ -23,6 +23,8 @@ const Options =
     \\  -h, --help                Display this help menu and exit.
     \\  -r, --repl                Start the REPL.
     \\  -e, --engine <engine>     Select the engine to use: 'bytecode' or 'eval' (default: 'eval')
+    \\  -d, --dump-bytecode       Dumps the bytecode before running (only used for the bytecode engine)
+    \\  -p, --print-popped        Prints the last popped value after the program runs
     \\  -i, --input  <input>      Evaluate code from the command line.
     \\  <file>                    Evaluate code from a given file.
 ;
@@ -78,14 +80,17 @@ pub fn main() !void {
     if (res.args.engine == .bytecode) {
         const result = try honey.runInVm(input, .{
             .allocator = allocator,
-            .error_writer = std.io.getStdOut().writer(),
+            .error_writer = std.io.getStdErr().writer(),
+            .dump_bytecode = res.args.@"dump-bytecode" == 1,
         });
         defer result.deinit();
 
         var vm = result.data;
-        const remaining = vm.stack.popOrNull();
-        if (remaining) |value| {
-            std.debug.print("Program resulted in value: {s}\n", .{value});
+
+        if (res.args.@"print-popped" == 0) return;
+
+        if (vm.getLastPopped()) |value| {
+            std.debug.print("Result: {s}\n", .{value});
         }
         return;
     }

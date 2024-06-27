@@ -348,7 +348,7 @@ fn runBinaryExpression(self: *Self, expression: ast.BinaryExpression, options: R
         .greater_than_equal => try left.greaterThanEqual(right),
         .less_than => try left.lessThan(right),
         .less_than_equal => try left.lessThanEqual(right),
-        inline else => utils.fmt.panicWithFormat("invalid binary operator: {s}", .{expression.operator}),
+        inline else => std.debug.panic("invalid binary operator: {s}", .{expression.operator}),
     };
 }
 
@@ -357,7 +357,7 @@ fn runPrefixExpression(self: *Self, expression: ast.PrefixExpression, options: R
     return switch (expression.operator) {
         .plus => .{ .number = right.number },
         .minus => .{ .number = -right.number },
-        inline else => utils.fmt.panicWithFormat("invalid prefix operator: {s}", .{expression.operator}),
+        inline else => std.debug.panic("invalid prefix operator: {s}", .{expression.operator}),
     };
 }
 

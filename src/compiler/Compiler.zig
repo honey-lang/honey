@@ -8,11 +8,39 @@ const Value = @import("value.zig").Value;
 const Bytecode = @import("Bytecode.zig");
 
 /// This represents a compiled instruction that has been added to the bytecode
-const CompiledInstruction = struct { opcode: Opcode, index: usize };
+const CompiledInstruction = struct {
+    /// The instruction's opcode
+    opcode: Opcode,
+    /// The index that the compiled instruction resides at in the bytecode
+    index: usize,
+
+    /// Returns the index of the (potential) next instruction given its index and its size
+    pub fn nextInstructionIndex(self: CompiledInstruction) usize {
+        return self.index + self.opcode.size();
+    }
+};
+
 /// The maximum offset that can be used in a jump instruction. Used as a placeholder until replaced with the actual offset
 const MaxOffset = std.math.maxInt(u16);
 
 const Self = @This();
+
+const Error = error{
+    /// Occurs when the compiler encounters an invalid opcode
+    InvalidInstruction,
+    /// Occurs when an expected opcode isn't matched by the current opcode
+    OpcodeReplaceMismatch,
+    /// Occurs when an opcode's data can't be replaced
+    OpcodeReplaceFailure,
+    /// Occurs when an opcode fails to encode
+    OpcodeEncodeFailure,
+    /// Occurs when a statement that isn't supported in the compiler yet
+    UnsupportedStatement,
+    /// Occurs when an expression that isn't supported in the compiler yet
+    UnsupportedExpression,
+    /// Occurs when the compiler's allocator is out of memory
+    OutOfMemory,
+};
 
 /// A simple arena allocator used when compiling into bytecode
 arena: std.heap.ArenaAllocator,
@@ -23,10 +51,11 @@ instructions: std.ArrayList(u8),
 /// A list of constant expressions used in the program
 constants: std.ArrayList(Value),
 /// The last instruction that was added
-last_instruction: ?CompiledInstruction = null,
+last_compiled_instr: ?CompiledInstruction = null,
 /// The instruction before the last instruction
-previous_instruction: ?CompiledInstruction = null,
+penult_compiled_instr: ?CompiledInstruction = null,
 
+/// Initializes the compiler
 pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(ally),
@@ -44,40 +73,58 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Adds an operation to the bytecode
-fn addInstruction(self: *Self, instruction: opcodes.Instruction) !void {
+fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
     const writer = self.instructions.writer();
-    // size of the opcode + size of the instruction
-    const op: Opcode = std.meta.activeTag(instruction);
-    try op.encode(writer);
 
-    switch (instruction) {
-        inline else => |value| try opcodes.encode(value, writer),
-    }
+    const index = self.instructions.items.len;
+    try encode(writer, instruction);
 
-    self.previous_instruction = self.last_instruction;
-    self.last_instruction = .{ .opcode = op, .index = self.instructions.items.len };
+    // set last as penultimate instr
+    self.penult_compiled_instr = self.last_compiled_instr;
+
+    self.last_compiled_instr = CompiledInstruction{
+        .opcode = std.meta.activeTag(instruction),
+        .index = index,
+    };
 }
 
 /// Replaces the last instruction with a new instruction
 /// The opcodes between the old and new instructions must match
-fn replace(self: *Self, old: CompiledInstruction, new: opcodes.Instruction) !void {
-    const new_opcode = std.meta.activeTag(new);
+fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction) Error!void {
+    const new_opcode = std.meta.activeTag(new_instr);
     if (old.opcode != new_opcode) {
-        utils.fmt.panicWithFormat("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
+        // std.debug.panic("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
+        return Error.OpcodeReplaceMismatch;
     }
+
     var stream = std.io.fixedBufferStream(self.instructions.items);
-    try stream.seekTo(old.index);
-    try opcodes.encode(new, stream.writer());
+    const prev_index = stream.pos;
+    stream.seekTo(old.index) catch return Error.OpcodeReplaceFailure;
+    try encode(stream.writer(), new_instr);
+    stream.seekTo(prev_index) catch return Error.OpcodeReplaceFailure;
+}
+
+/// Encodes an instruction into the given writer
+fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
+    // size of the opcode + size of the instruction
+    const op: Opcode = std.meta.activeTag(instruction);
+    op.encode(writer) catch return Error.OpcodeEncodeFailure;
+
+    switch (instruction) {
+        inline else => |value| opcodes.encode(value, writer) catch {
+            return Error.OpcodeEncodeFailure;
+        },
+    }
 }
 
 /// Returns the last instruction or panics if there is none
-fn getLastInstruction(self: *Self) !CompiledInstruction {
-    return self.last_instruction orelse @panic("Expected last instruction but found none");
+fn getLastInstruction(self: *Self) Error!CompiledInstruction {
+    return self.last_compiled_instr orelse Error.InvalidInstruction;
 }
 
 /// Returns the previous instruction before the last instruction or panics if there is none
-fn getPreviousInstruction(self: *Self) !CompiledInstruction {
-    return self.previous_instruction orelse @panic("Expected previous instruction but found none");
+fn getPreviousInstruction(self: *Self) Error!CompiledInstruction {
+    return self.penult_compiled_instr orelse Error.InvalidInstruction;
 }
 
 /// Compiles the program into bytecode
@@ -85,25 +132,27 @@ pub fn compile(self: *Self) !Bytecode {
     for (self.program.statements.items) |statement| {
         try self.compileStatement(statement);
     }
+
     return .{ .instructions = self.instructions.items, .constants = self.constants.items };
 }
 
 /// Compiles a statement into bytecode
-fn compileStatement(self: *Self, statement: ast.Statement) !void {
+fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
     switch (statement) {
         .expression => |inner| {
             try self.compileExpression(inner.expression);
             // pop the result of the statement off the stack after it's done
             try self.addInstruction(.pop);
         },
+        // .variable => |inner| {
+
+        // },
         .block => |inner| {
             for (inner.statements) |stmt| {
                 try self.compileStatement(stmt);
             }
         },
-        inline else => {
-            utils.fmt.panicWithFormat("unimplemented statement type: {s}", .{@tagName(statement)});
-        },
+        inline else => return Error.UnsupportedStatement,
     }
 }
 
@@ -112,7 +161,7 @@ inline fn resolvePrefixToInstr(operator: ast.Operator) opcodes.Instruction {
     return switch (operator) {
         .minus => .neg,
         .not => .not,
-        inline else => utils.fmt.panicWithFormat("unexpected operator: {s}", .{operator}),
+        inline else => std.debug.panic("unexpected operator: {s}", .{operator}),
     };
 }
 
@@ -133,12 +182,18 @@ inline fn resolveInfixToInstr(operator: ast.Operator) opcodes.Instruction {
         .greater_than_equal => .gt_eql,
         .@"and" => .@"and",
         .@"or" => .@"or",
-        inline else => utils.fmt.panicWithFormat("unexpected infix operator: {s}", .{operator}),
+        inline else => std.debug.panic("unexpected infix operator: {s}", .{operator}),
     };
 }
 
+/// Attempts to add a constant to the list of constants and return its index
+fn addConstant(self: *Self, value: Value) Error!u16 {
+    self.constants.append(value) catch return Error.OutOfMemory;
+    return @intCast(self.constants.items.len - 1);
+}
+
 /// Compiles an expression to opcodes
-fn compileExpression(self: *Self, expression: ast.Expression) !void {
+fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
     switch (expression) {
         .binary => |inner| {
             try self.compileExpression(inner.lhs.*);
@@ -150,31 +205,47 @@ fn compileExpression(self: *Self, expression: ast.Expression) !void {
             try self.addInstruction(resolvePrefixToInstr(inner.operator));
         },
         .if_expr => |inner| {
+            var jump_instr: CompiledInstruction = undefined;
+            var jif_instr: CompiledInstruction = undefined;
             for (inner.condition_list) |condition_data| {
+                // 1. compile condition
+                // 2. check if condition is false
                 try self.compileExpression(condition_data.condition.*);
                 try self.addInstruction(.{ .jump_if_false = MaxOffset });
+                jif_instr = try self.getLastInstruction();
                 try self.compileIfBody(condition_data.body);
                 try self.addInstruction(.{ .jump = MaxOffset });
+                jump_instr = try self.getLastInstruction();
             }
 
+            // 3. if false, jump to alternative block if it exists or end of block if it doesn't
+            var jif_target: CompiledInstruction = try self.getLastInstruction();
             if (inner.alternative) |body| {
                 try self.compileIfBody(body);
             }
+
+            const jump_target = try self.getLastInstruction();
+            try self.replace(jump_instr, .{ .jump = @intCast(jump_target.nextInstructionIndex()) });
+            try self.replace(jif_instr, .{ .jump_if_false = @intCast(jif_target.nextInstructionIndex()) });
         },
         .number => |value| {
-            try self.constants.append(.{ .number = value });
-            try self.addInstruction(.{ .@"const" = @as(u16, @intCast(self.constants.items.len - 1)) });
+            const index = try self.addConstant(.{ .number = value });
+            try self.addInstruction(.{ .@"const" = index });
         },
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
-        inline else => utils.fmt.panicWithFormat("unexpected expression type: {s}", .{expression}),
+        inline else => std.debug.panic("unexpected expression type: {s}", .{expression}),
     }
 }
 
 /// Compiles an if body to opcodes
-inline fn compileIfBody(self: *Self, body: ast.IfExpression.Body) !void {
+inline fn compileIfBody(self: *Self, body: ast.IfExpression.Body) Error!void {
     switch (body) {
-        .block => |block| try self.compileStatement(block),
+        .block => |block| {
+            for (block.statements) |statement| {
+                try self.compileStatement(statement);
+            }
+        },
         .expression => |expr| try self.compileExpression(expr.*),
     }
 }
@@ -194,18 +265,13 @@ test "test simple addition compilation" {
     defer compiler.deinit();
 
     const bytecode = try compiler.compile();
-    try std.testing.expectEqualSlices(u8, opcodes.make(&.{
+
+    const expected_bytes = opcodes.make(&[_]Instruction{
         .{ .@"const" = 0x00 },
         .{ .@"const" = 0x01 },
         .add,
         .pop,
-    }), bytecode.instructions);
-    try std.testing.expectEqualSlices(Value, &.{
-        .{ .number = 1 },
-        .{ .number = 2 },
-    }, bytecode.constants);
-}
-
-test "ensure replacement works" {
-    
+    });
+    try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
+    try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 } }, bytecode.constants);
 }

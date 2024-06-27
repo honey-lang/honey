@@ -36,6 +36,8 @@ const VmError = error{
     UnexpectedValueType,
 };
 
+/// The bytecode object for the VM
+bytecode: Bytecode,
 /// The instructions to run in the VM
 instructions: []const u8,
 /// The constants to use in the VM
@@ -52,14 +54,24 @@ stack_pointer: usize = 0,
 stack: utils.Stack(Value),
 /// Holds the last value popped from the stack
 last_popped: ?Value = null,
+/// The virtual machine options
+options: VmOptions,
+
+/// The options for the virtual machine
+pub const VmOptions = struct {
+    /// If enabled, it will dump the bytecode into stderr before running the program
+    dump_bytecode: bool = false,
+};
 
 /// Initializes the VM with the needed values
-pub fn init(bytecode: Bytecode, ally: std.mem.Allocator) Self {
+pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Self {
     return Self{
+        .bytecode = bytecode,
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
+        .options = options,
     };
 }
 
@@ -76,6 +88,12 @@ pub fn getLastPopped(self: *Self) ?Value {
 
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
+    if (self.options.dump_bytecode) {
+        const writer = std.io.getStdErr().writer();
+        writer.writeAll("------------ Bytecode ------------\n") catch unreachable;
+        self.bytecode.dump(writer) catch unreachable;
+        writer.writeAll("----------------------------------\n") catch unreachable;
+    }
     while (self.program_counter < self.instructions.len) {
         const instruction = try self.fetchInstruction();
         try self.execute(instruction);
@@ -116,6 +134,15 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 return error.UnexpectedValueType;
             }
             try self.pushOrError(nativeBoolToValue(!value.boolean));
+        },
+        .jump_if_false => {
+            const index = try self.fetchNumber(u16);
+            const value = try self.popOrError();
+            if (!value.boolean) self.program_counter = index;
+        },
+        .jump => {
+            const index = try self.fetchNumber(u16);
+            self.program_counter = index;
         },
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
@@ -262,7 +289,7 @@ fn executeComparison(self: *Self, opcode: Opcode) VmError!void {
 
 /// Executes a logical instruction
 fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
-    const rhs, const lhs = try self.popCountOrError(2);
+    const rhs: Value, const lhs: Value = try self.popCountOrError(2);
     const result = nativeBoolToValue(switch (opcode) {
         .@"and", .@"or" => blk: {
             if (lhs != .boolean or rhs != .boolean) {
@@ -301,7 +328,7 @@ test "ensure program results in correct value" {
     const ally = std.testing.allocator;
     const result = try honey.compile("1 + 2", .{ .allocator = ally, .error_writer = std.io.getStdErr().writer() });
     defer result.deinit();
-    var vm = Self.init(result.data, ally);
+    var vm = Self.init(result.data, ally, .{});
     defer vm.deinit();
     try vm.run();
 

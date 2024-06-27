@@ -78,6 +78,7 @@ pub fn compile(input: []const u8, options: CompileOptions) !Result(Bytecode) {
 pub const VmRunOptions = struct {
     allocator: std.mem.Allocator,
     error_writer: std.fs.File.Writer,
+    dump_bytecode: bool = false,
 };
 
 pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(Vm) {
@@ -88,7 +89,9 @@ pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(Vm) {
     defer result.deinit();
 
     var arena = std.heap.ArenaAllocator.init(options.allocator);
-    var vm = Vm.init(result.data, arena.allocator());
+    var vm = Vm.init(result.data, arena.allocator(), .{
+        .dump_bytecode = options.dump_bytecode,
+    });
     vm.run() catch |err| {
         vm.report(options.error_writer);
         return err;

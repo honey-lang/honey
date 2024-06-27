@@ -11,14 +11,14 @@ pub const Value = union(enum) {
     constant: u16,
     /// `number` represents a numerical value, both integers and floats.
     number: f64,
-    /// `string` represents a string value.
-    string: []const u8,
     /// `boolean` represents a boolean value (true or false).
     boolean: bool,
     /// `null` represents the null value and will be used for optional values.
     null: void,
     /// `void` represents the void value and will be used for functions that do not return a value.
     void: void,
+    /// `object` represents a reference to an object (e.g., string, array, class, etc.)
+    object: void,
 
     pub fn isVoid(self: Value) bool {
         return self == .void;
@@ -28,17 +28,18 @@ pub const Value = union(enum) {
     pub fn equal(self: Value, other: Value) bool {
         return switch (self) {
             .number => |value| if (other == .number) value == other.number else false,
-            .string => |value| if (other == .string) std.mem.eql(u8, value, other.string) else false,
             .boolean => |value| if (other == .boolean) value == other.boolean else false,
             .null => other == .null,
             inline else => false,
         };
     }
 
-    pub fn plus(self: Value, other: Value, ally: std.mem.Allocator) !Value {
+    pub fn plus(self: Value, other: Value) !Value {
         return switch (self) {
-            .number => |value| if (other == .number) return .{ .number = value + other.number } else return error.ExpectedNumber,
-            .string => |value| .{ .string = std.fmt.allocPrint(ally, "{s}{s}", .{ value, other }) catch return error.OutOfMemory },
+            .number => |value| switch (other) {
+                .number => |other_value| .{ .number = value + other_value },
+                inline else => return error.UnexpectedType,
+            },
             inline else => return error.UnexpectedType,
         };
     }
@@ -92,6 +93,13 @@ pub const Value = union(enum) {
         return error.ExpectedBoolean;
     }
 
+    pub fn not(self: Value) !Value {
+        if (self == .boolean) {
+            return .{ .boolean = !self.boolean };
+        }
+        return error.ExpectedBoolean;
+    }
+
     pub fn greaterThan(self: Value, other: Value) !Value {
         if (self == .number and other == .number) {
             return .{ .boolean = self.number > other.number };
@@ -124,7 +132,6 @@ pub const Value = union(enum) {
     pub fn format(self: Value, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
             .number => |value| try writer.print("{d}", .{value}),
-            .string => |value| try writer.writeAll(value),
             .boolean => |value| try writer.writeAll(if (value) "true" else "false"),
             .null => try writer.writeAll("null"),
             inline else => {},

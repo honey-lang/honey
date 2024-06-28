@@ -36,29 +36,49 @@ pub fn rand(_: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {
 }
 
 pub fn print(_: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {
-    const stdout = std.io.getStdOut().writer();
+    const stderr = std.io.getStdErr().writer();
     for (args) |arg| {
-        stdout.print("{s}", .{arg}) catch return error.PrintFailed;
+        stderr.print("{s}", .{arg}) catch return error.PrintFailed;
     }
     return null;
 }
 
 pub fn println(evaluator: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {
     _ = try print(evaluator, args);
-    const stdout = std.io.getStdOut().writer();
-    stdout.writeAll("\n") catch return error.PrintFailed;
+    const stderr = std.io.getStdErr().writer();
+    stderr.writeAll("\n") catch return error.PrintFailed;
     return null;
 }
 
+/// The maximum size of a prompt message.
+const MaxPromptSize = 1024;
+
+/// Prints a given message and then prompts the user for input using stdin.
 pub fn prompt(evaluator: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {
-    const stdout = std.io.getStdOut().writer();
+    const stderr = std.io.getStdErr().writer();
     if (args.len != 1 or args[0] != .string) {
         return null;
     }
-    stdout.print("{s}", .{args[0].string}) catch return error.PrintFailed;
+
+    const msg = args[0].string;
+    stderr.print("{s}", .{msg}) catch return error.PrintFailed;
+
+    // create a prompt buffer & a related stream
+    var prompt_buf: [MaxPromptSize]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&prompt_buf);
+
+    // stream the prompt message to stdin
     const stdin = std.io.getStdIn().reader();
-    const data = stdin.readUntilDelimiterOrEofAlloc(evaluator.allocator(), '\n', 1024) catch return error.OutOfMemory;
-    return .{ .string = data.? };
+    stdin.streamUntilDelimiter(stream.writer(), '\n', MaxPromptSize) catch |err| switch (err) {
+        error.StreamTooLong => return error.PromptTooLong,
+        else => return error.PromptFailed,
+    };
+
+    // trim the prompt buffer of CRLF
+    const trimmed = std.mem.trim(u8, stream.getWritten(), "\r\n");
+
+    // create a new string within the evaluator's arena and return it
+    return try evaluator.newString(trimmed);
 }
 
 pub fn memory(evaluator: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {

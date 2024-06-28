@@ -199,12 +199,21 @@ pub fn init(ally: std.mem.Allocator, env: *Environment) Self {
     return self;
 }
 
+/// Returns the allocator used by the evaluator.
 pub fn allocator(self: *Self) std.mem.Allocator {
     return self.arena.allocator();
 }
 
+/// Creates and allocates a new string value.
+pub fn newString(self: *Self, value: []const u8) !Value {
+    const allocated = self.allocator().dupe(u8, value) catch return error.OutOfMemory;
+    return .{ .string = allocated };
+}
+
+/// Deinitializes the evaluator.
 pub fn deinit(self: *Self) void {
     self.builtins.deinit();
+    self.arena.deinit();
 }
 
 pub fn addBuiltinLibrary(self: *Self, comptime import: type) void {

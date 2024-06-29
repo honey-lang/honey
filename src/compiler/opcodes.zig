@@ -18,6 +18,8 @@ pub const Opcode = enum(u8) {
     false = 0x11,
     /// The `null` opcode is used to push a null value onto the stack.
     null = 0x12,
+    /// The `void` opcode is used to push a void value onto the stack - this is used for functions or blocks that do not return a value.
+    void = 0x13,
     /// The `add` opcode is used to add two values.
     add = 0x20,
     /// The `sub` opcode is used to subtract two values.
@@ -100,6 +102,7 @@ pub const Instruction = union(Opcode) {
     true: void,
     false: void,
     null: void,
+    void: void,
     add: void,
     sub: void,
     mul: void,

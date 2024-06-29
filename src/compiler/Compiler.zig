@@ -220,8 +220,12 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
             // 3. if false, jump to alternative block if it exists or end of block if it doesn't
             var jif_target: CompiledInstruction = try self.getLastInstruction();
+
+            // compile the if body if it exists or a void instruction if it doesn't
             if (inner.alternative) |body| {
                 try self.compileIfBody(body);
+            } else {
+                try self.addInstruction(.void);
             }
 
             const jump_target = try self.getLastInstruction();
@@ -264,6 +268,7 @@ inline fn compileIfBody(self: *Self, body: ast.IfExpression.Body) Error!void {
             for (block.statements) |statement| {
                 try self.compileStatement(statement);
             }
+            try self.addInstruction(.void);
         },
         .expression => |expr| try self.compileExpression(expr.*),
     }

@@ -126,6 +126,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .true => try self.pushOrError(Value.True),
         .false => try self.pushOrError(Value.False),
         .null => try self.pushOrError(Value.Null),
+        .void => try self.pushOrError(Value.Void),
         .pop => _ = try self.popOrError(),
         // operation instructions
         .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),

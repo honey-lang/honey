@@ -121,14 +121,6 @@ fn trackObject(self: *Self, data: *Value) VmError!void {
     node.* = .{ .data = data, .next = self.objects.first };
 
     self.objects.prepend(node);
-
-    std.debug.print("----------------------------------\n", .{});
-    var next: ?*ObjectList.Node = self.objects.first;
-    while (next) |current| {
-        std.debug.print("Node: {*} | {s}\n", .{ current, current.data });
-        next = current.next;
-    }
-    std.debug.print("----------------------------------\n", .{});
 }
 
 /// Returns the last value popped from the stack
@@ -428,7 +420,7 @@ fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
     try self.pushOrError(result);
 }
 
-/// Multiplies a string by a power
+/// Multiplies a string by a power (e.g., "hello" ** 3 = "hellohellohello")
 inline fn multiplyStr(self: *Self, value: []const u8, power: usize) ![]const u8 {
     const buf = self.allocator().alloc(u8, value.len * power) catch |err| {
         self.diagnostics.report("Failed to allocate memory for string power operation: {any}", .{err});

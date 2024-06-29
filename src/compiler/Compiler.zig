@@ -239,13 +239,16 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
             jif_target = try self.getLastInstruction();
+
             for (inner.body.statements) |statement| {
                 try self.compileStatement(statement);
             }
             try self.addInstruction(.{ .jump = @intCast(loop_start_instr.index) });
-
             const jump_target = try self.getLastInstruction();
             try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.nextInstructionIndex()) });
+
+            // todo: only add a void instr if the loop body is empty
+            try self.addInstruction(.void);
         },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });

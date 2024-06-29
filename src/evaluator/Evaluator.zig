@@ -323,7 +323,7 @@ fn runExpression(self: *Self, expression: Expression, options: RunOptions) anyer
         .boolean => |value| if (value) Value.True else Value.False,
         .null => Value.Null,
         .if_expr => |inner| try self.runIfExpression(inner, options),
-        .@"while" => |inner| try self.runWhileExpression(inner, options),
+        .while_expr => |inner| try self.runWhileExpression(inner, options),
         .builtin => |inner| try self.runBuiltinExpression(inner, options),
         .call => |inner| try self.runCallExpression(inner, options),
         .fn_ref => unreachable,

@@ -269,7 +269,7 @@ pub const Expression = union(enum) {
     /// TODO: Rename back to @"if" when ZLS fixes the bug with @"" identifiers.
     if_expr: IfExpression,
     /// A while expression, such as `while (true) { doSomething(); }`.
-    @"while": WhileExpression,
+    while_expr: WhileExpression,
     /// A builtin expression, such as `@print("Hello, world!")`.
     builtin: BuiltinExpression,
     /// A function call expression, such as `foo(1, 2, 3)`.
@@ -300,7 +300,7 @@ pub const Expression = union(enum) {
                     try writer.print(" else {s}", .{alternative});
                 }
             },
-            .@"while" => |inner| writer.print("while ({s}) {s}", .{ inner.condition, inner.body }),
+            .while_expr => |inner| writer.print("while ({s}) {s}", .{ inner.condition, inner.body }),
             .builtin => |inner| {
                 try writer.print("@{s}(", .{inner.name});
                 for (inner.arguments, 0..) |argument, index| {
@@ -353,7 +353,7 @@ pub fn createIfStatement(condition_list: []const IfExpression.ConditionData, alt
 }
 
 pub fn createWhileStatement(condition: *Expression, body: BlockStatement, terminated: bool) Statement {
-    return .{ .expression = .{ .expression = .{ .@"while" = .{ .condition = condition, .body = body } }, .terminated = terminated } };
+    return .{ .expression = .{ .expression = .{ .while_expr = .{ .condition = condition, .body = body } }, .terminated = terminated } };
 }
 
 pub fn createCallStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {

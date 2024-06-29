@@ -88,7 +88,7 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Returns the allocator attached to the arena
-pub fn allocator(self: *Self) std.mem.Allocator {
+fn allocator(self: *Self) std.mem.Allocator {
     return self.arena.allocator();
 }
 
@@ -127,6 +127,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .false => try self.pushOrError(Value.False),
         .null => try self.pushOrError(Value.Null),
         .pop => _ = try self.popOrError(),
+        // operation instructions
         .add, .sub, .mul, .div, .mod, .pow => try self.executeArithmetic(instruction),
         .eql, .neql, .@"and", .@"or" => try self.executeLogical(instruction),
         .gt, .gt_eql, .lt, .lt_eql => try self.executeComparison(instruction),
@@ -146,6 +147,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
             try self.pushOrError(nativeBoolToValue(!value.boolean));
         },
+        // jump instructions
         .jump_if_false => {
             const index = try self.fetchNumber(u16);
             const value = try self.popOrError();

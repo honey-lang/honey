@@ -318,7 +318,7 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
     const condition_ptr = try self.moveToHeap(parsed);
     try self.expectCurrentAndAdvance(.right_paren);
     const body = try self.parseBlockStatement();
-    return .{ .@"while" = .{ .condition = condition_ptr, .body = body } };
+    return .{ .while_expr = .{ .condition = condition_ptr, .body = body } };
 }
 
 /// Parses an expression by attempting to parse it as a prefix.

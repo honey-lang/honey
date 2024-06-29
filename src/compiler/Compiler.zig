@@ -228,6 +228,21 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.replace(jump_instr, .{ .jump = @intCast(jump_target.nextInstructionIndex()) });
             try self.replace(jif_instr, .{ .jump_if_false = @intCast(jif_target.nextInstructionIndex()) });
         },
+        .while_expr => |inner| {
+            var jif_target: CompiledInstruction = undefined;
+            try self.compileExpression(inner.condition.*);
+            const loop_start_instr = try self.getLastInstruction();
+
+            try self.addInstruction(.{ .jump_if_false = MaxOffset });
+            jif_target = try self.getLastInstruction();
+            for (inner.body.statements) |statement| {
+                try self.compileStatement(statement);
+            }
+            try self.addInstruction(.{ .jump = @intCast(loop_start_instr.index) });
+
+            const jump_target = try self.getLastInstruction();
+            try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.nextInstructionIndex()) });
+        },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
             try self.addInstruction(.{ .@"const" = index });

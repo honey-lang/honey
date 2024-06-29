@@ -34,6 +34,8 @@ const VmError = error{
     InvalidNumberType,
     /// `UnexpectedValueType` is returned when the type of a value is not what was expected
     UnexpectedValueType,
+    /// `GenericError` is returned when an error occurs that does not fit into any other category
+    GenericError,
 };
 
 /// The arena used for memory allocation in the VM
@@ -215,14 +217,13 @@ fn fetchNumber(self: *Self, comptime T: type) VmError!T {
     const type_info = @typeInfo(T);
     const type_size = @sizeOf(T);
     if (type_size / 8 != 0) {
-        self.diagnostics.report("Invalid type size ({d}) for number type.", .{type_size});
-        return error.InvalidNumberType;
+        @compileError("Invalid number type size");
     }
     const bytes = try self.fetchAmount(@sizeOf(T));
     return switch (type_info) {
         .Int => std.mem.readInt(T, bytes[0..@sizeOf(T)], .big),
         .Float => utils.bytes.bytesToFloat(T, bytes, .big),
-        inline else => unreachable,
+        inline else => @compileError("Invalid type"),
     };
 }
 
@@ -267,40 +268,47 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
     const rhs: Value, const lhs: Value = try self.popCountOrError(2);
     // if the lhs is a string, we can assume we are concatenating
     if (lhs == .string) {
-        const result = switch (rhs) {
-            .string => blk: {
-                const concatted = lhs.concat(rhs, self.allocator()) catch |err| {
-                    self.diagnostics.report("Failed to concatenate strings: {any}", .{err});
-                    return error.UnexpectedValueType;
-                };
-                break :blk concatted;
-            },
-            .number => switch (opcode) {
-                // "hello" ** 3 = "hellohellohello"
-                .pow => blk: {
-                    const power: usize = @intFromFloat(rhs.number);
-                    const buf = self.allocator().alloc(u8, lhs.string.len * power) catch |err| {
-                        self.diagnostics.report("Failed to allocate memory for string power operation: {any}", .{err});
-                        return error.OutOfMemory;
-                    };
-
-                    // todo: is there a better way to do this?
-                    for (0..power) |index| {
-                        const start = index * lhs.string.len;
-                        const end = start + lhs.string.len;
-                        @memcpy(buf[start..end], lhs.string);
-                    }
-
-                    break :blk Value{ .string = buf };
-                },
-                inline else => {
+        const result = switch (opcode) {
+            // "hello" + "world" = "helloworld"
+            .add => {
+                if (rhs != .string) {
                     self.diagnostics.report("Attempted to concatenate string with non-string value: {s}", .{rhs});
                     return error.UnexpectedValueType;
-                },
+                }
+                const concatted = lhs.concat(rhs, self.allocator()) catch |err| {
+                    self.diagnostics.report("Failed to concatenate strings: {any}", .{err});
+                    return error.GenericError;
+                };
+                try self.pushOrError(concatted);
+                return;
             },
-            else => {
-                self.diagnostics.report("Attempted to concatenate string with non-string value: {s}", .{rhs});
-                return error.UnexpectedValueType;
+            // "hello" ** 3 = "hellohellohello"
+            .pow => blk: {
+                if (rhs != .number) {
+                    self.diagnostics.report("Attempted to raise string to non-number power: {s}", .{rhs});
+                    return error.UnexpectedValueType;
+                } else if (rhs.number < 0) {
+                    self.diagnostics.report("Attempted to raise string to negative power: {d}", .{rhs.number});
+                    return error.GenericError;
+                }
+                const power: usize = @intFromFloat(rhs.number);
+                const buf = self.allocator().alloc(u8, lhs.string.len * power) catch |err| {
+                    self.diagnostics.report("Failed to allocate memory for string power operation: {any}", .{err});
+                    return error.OutOfMemory;
+                };
+
+                // todo: is there a better way to do this?
+                for (0..power) |index| {
+                    const start = index * lhs.string.len;
+                    const end = start + lhs.string.len;
+                    @memcpy(buf[start..end], lhs.string);
+                }
+
+                break :blk .{ .string = buf };
+            },
+            inline else => {
+                self.diagnostics.report("Unexpected opcode for string operation between {s} and {s}: {s}", .{ lhs, rhs, opcode });
+                return error.GenericError;
             },
         };
         try self.pushOrError(result);

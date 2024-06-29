@@ -34,27 +34,30 @@ pub fn format(self: Self, _: []const u8, _: std.fmt.FormatOptions, writer: anyty
         index += 1;
 
         try writer.print(" {s}", .{opcode});
-        // only print data if it has any
-        if (opcode.width() > 0) {
-            const bytes = self.instructions[index .. index + opcode.width()];
-            switch (opcode) {
-                .@"const" => {
-                    const const_idx = std.mem.readInt(u16, bytes[0..2], .big);
-                    try writer.print(" {s}", .{self.constants[const_idx]});
-                },
-                .jump, .jump_if_false => {
-                    const instr_idx = std.mem.readInt(u16, bytes[0..2], .big);
-                    try writer.print(" {x:0>4}", .{instr_idx});
-                },
-                inline else => {},
-            }
-
-            index += opcode.width();
-        }
+        const operands = self.instructions[index .. index + opcode.width()];
+        // formats the opcode
+        try self.formatOpcode(opcode, operands, writer);
+        index += opcode.width();
 
         if (index < self.instructions.len) {
             try writer.writeAll("\n");
         }
+    }
+}
+
+fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytype) !void {
+    if (opcode.width() <= 0) return;
+
+    switch (opcode) {
+        .@"const" => {
+            const const_idx = std.mem.readInt(u16, operands[0..2], .big);
+            try writer.print(" {s}", .{self.constants[const_idx]});
+        },
+        .jump, .jump_if_false => {
+            const instr_idx = std.mem.readInt(u16, operands[0..2], .big);
+            try writer.print(" {x:0>4}", .{instr_idx});
+        },
+        inline else => {},
     }
 }
 

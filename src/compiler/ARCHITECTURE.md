@@ -12,6 +12,7 @@
 | `true`          | 0x10   | void     |
 | `false`         | 0x11   | void     |
 | `null`          | 0x12   | void     |
+| `void`          | 0x13   | void     |
 | `add`           | 0x20   | void     |
 | `sub`           | 0x21   | void     |
 | `mul`           | 0x22   | void     |

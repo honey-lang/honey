@@ -38,6 +38,9 @@ const VmError = error{
     GenericError,
 };
 
+/// The list used to keep track of objects in the VM
+const ObjectList = std.SinglyLinkedList(*Value);
+
 /// The arena used for memory allocation in the VM
 arena: std.heap.ArenaAllocator,
 /// The bytecode object for the VM
@@ -46,6 +49,8 @@ bytecode: Bytecode,
 instructions: []const u8,
 /// The constants to use in the VM
 constants: []const Value,
+/// The objects allocated in the arena for the VM (used for GC)
+objects: ObjectList,
 /// Diagnostics for the VM
 diagnostics: utils.Diagnostics,
 /// Whether the VM is running or not
@@ -74,6 +79,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .bytecode = bytecode,
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
+        .objects = .{},
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
         .options = options,
@@ -90,6 +96,30 @@ pub fn deinit(self: *Self) void {
 /// Returns the allocator attached to the arena
 fn allocator(self: *Self) std.mem.Allocator {
     return self.arena.allocator();
+}
+
+/// Collects garbage in the VM
+fn collectGarbage(self: *Self) VmError!void {
+    while (self.objects.popFirst()) |node| {
+        switch (node.data.*) {
+            .string => self.allocator().free(node.data.string),
+            inline else => {
+                self.diagnostics.report("Unhandled object type encountered during garbage collection: {s}", .{@tagName(node.data)});
+                return error.GenericError;
+            },
+        }
+        self.allocator().destroy(node.data);
+    }
+}
+
+/// Pushes an object onto the object list
+fn trackObject(self: *Self, data: *Value) VmError!void {
+    const node = self.allocator().create(ObjectList.Node) catch |err| {
+        self.diagnostics.report("Failed to allocate memory for object list node: {any}", .{err});
+        return error.OutOfMemory;
+    };
+    node.* = .{ .data = data, .next = self.objects.first };
+    self.objects.prepend(node);
 }
 
 /// Returns the last value popped from the stack
@@ -273,17 +303,19 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
     if (lhs == .string) {
         const result = switch (opcode) {
             // "hello" + "world" = "helloworld"
-            .add => {
+            .add => blk: {
                 if (rhs != .string) {
                     self.diagnostics.report("Attempted to concatenate string with non-string value: {s}", .{rhs});
                     return error.UnexpectedValueType;
                 }
-                const concatted = lhs.concat(rhs, self.allocator()) catch |err| {
+                var concatted = lhs.concat(rhs, self.allocator()) catch |err| {
                     self.diagnostics.report("Failed to concatenate strings: {any}", .{err});
                     return error.GenericError;
                 };
-                try self.pushOrError(concatted);
-                return;
+
+                // track object for GC
+                try self.trackObject(&concatted);
+                break :blk concatted;
             },
             // "hello" ** 3 = "hellohellohello"
             .pow => blk: {
@@ -294,20 +326,21 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
                     self.diagnostics.report("Attempted to raise string to negative power: {d}", .{rhs.number});
                     return error.GenericError;
                 }
+
                 const power: usize = @intFromFloat(rhs.number);
-                const buf = self.allocator().alloc(u8, lhs.string.len * power) catch |err| {
+                const concatted = try self.multiplyStr(lhs.string, power);
+                errdefer self.allocator().free(concatted);
+
+                const value = self.allocator().create(Value) catch |err| {
                     self.diagnostics.report("Failed to allocate memory for string power operation: {any}", .{err});
                     return error.OutOfMemory;
                 };
+                errdefer self.allocator().destroy(value);
+                value.* = .{ .string = concatted };
 
-                // todo: is there a better way to do this?
-                for (0..power) |index| {
-                    const start = index * lhs.string.len;
-                    const end = start + lhs.string.len;
-                    @memcpy(buf[start..end], lhs.string);
-                }
-
-                break :blk .{ .string = buf };
+                // track object for GC
+                try self.trackObject(value);
+                break :blk value.*;
             },
             inline else => {
                 self.diagnostics.report("Unexpected opcode for string operation between {s} and {s}: {s}", .{ lhs, rhs, opcode });
@@ -378,6 +411,23 @@ fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
         inline else => unreachable,
     });
     try self.pushOrError(result);
+}
+
+/// Multiplies a string by a power
+inline fn multiplyStr(self: *Self, value: []const u8, power: usize) ![]const u8 {
+    const buf = self.allocator().alloc(u8, value.len * power) catch |err| {
+        self.diagnostics.report("Failed to allocate memory for string power operation: {any}", .{err});
+        return error.OutOfMemory;
+    };
+
+    // todo: is there a better way to do this?
+    for (0..power) |index| {
+        const start = index * value.len;
+        const end = start + value.len;
+        @memcpy(buf[start..end], value);
+    }
+
+    return buf;
 }
 
 /// Converts a native boolean to the value constant equivalent

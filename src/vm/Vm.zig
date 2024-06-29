@@ -119,7 +119,16 @@ fn trackObject(self: *Self, data: *Value) VmError!void {
         return error.OutOfMemory;
     };
     node.* = .{ .data = data, .next = self.objects.first };
+
     self.objects.prepend(node);
+
+    std.debug.print("----------------------------------\n", .{});
+    var next: ?*ObjectList.Node = self.objects.first;
+    while (next) |current| {
+        std.debug.print("Node: {*} | {s}\n", .{ current, current.data });
+        next = current.next;
+    }
+    std.debug.print("----------------------------------\n", .{});
 }
 
 /// Returns the last value popped from the stack
@@ -308,13 +317,19 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
                     self.diagnostics.report("Attempted to concatenate string with non-string value: {s}", .{rhs});
                     return error.UnexpectedValueType;
                 }
-                var concatted = lhs.concat(rhs, self.allocator()) catch |err| {
+
+                const concatted = self.allocator().create(Value) catch |err| {
+                    self.diagnostics.report("Failed to allocate memory for string concatenation: {any}", .{err});
+                    return error.OutOfMemory;
+                };
+
+                concatted.* = lhs.concat(rhs, self.allocator()) catch |err| {
                     self.diagnostics.report("Failed to concatenate strings: {any}", .{err});
                     return error.GenericError;
                 };
 
                 // track object for GC
-                try self.trackObject(&concatted);
+                try self.trackObject(concatted);
                 break :blk concatted;
             },
             // "hello" ** 3 = "hellohellohello"
@@ -340,14 +355,14 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
 
                 // track object for GC
                 try self.trackObject(value);
-                break :blk value.*;
+                break :blk value;
             },
             inline else => {
                 self.diagnostics.report("Unexpected opcode for string operation between {s} and {s}: {s}", .{ lhs, rhs, opcode });
                 return error.GenericError;
             },
         };
-        try self.pushOrError(result);
+        try self.pushOrError(result.*);
         return;
     }
     if (lhs != .number or rhs != .number) {

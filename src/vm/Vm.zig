@@ -36,6 +36,8 @@ const VmError = error{
     UnexpectedValueType,
 };
 
+/// The arena used for memory allocation in the VM
+arena: std.heap.ArenaAllocator,
 /// The bytecode object for the VM
 bytecode: Bytecode,
 /// The instructions to run in the VM
@@ -66,6 +68,7 @@ pub const VmOptions = struct {
 /// Initializes the VM with the needed values
 pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Self {
     return Self{
+        .arena = std.heap.ArenaAllocator.init(ally),
         .bytecode = bytecode,
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
@@ -79,6 +82,12 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
     self.diagnostics.deinit();
+    self.arena.deinit();
+}
+
+/// Returns the allocator attached to the arena
+pub fn allocator(self: *Self) std.mem.Allocator {
+    return self.arena.allocator();
 }
 
 /// Returns the last value popped from the stack
@@ -255,7 +264,48 @@ fn popCountOrError(self: *Self, comptime N: comptime_int) VmError!utils.Repeated
 
 /// Executes an arithmetic instruction
 fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
-    const rhs, const lhs = try self.popCountOrError(2);
+    const rhs: Value, const lhs: Value = try self.popCountOrError(2);
+    // if the lhs is a string, we can assume we are concatenating
+    if (lhs == .string) {
+        const result = switch (rhs) {
+            .string => blk: {
+                const concatted = lhs.concat(rhs, self.allocator()) catch |err| {
+                    self.diagnostics.report("Failed to concatenate strings: {any}", .{err});
+                    return error.UnexpectedValueType;
+                };
+                break :blk concatted;
+            },
+            .number => switch (opcode) {
+                // "hello" ** 3 = "hellohellohello"
+                .pow => blk: {
+                    const power: usize = @intFromFloat(rhs.number);
+                    const buf = self.allocator().alloc(u8, lhs.string.len * power) catch |err| {
+                        self.diagnostics.report("Failed to allocate memory for string power operation: {any}", .{err});
+                        return error.OutOfMemory;
+                    };
+
+                    // todo: is there a better way to do this?
+                    for (0..power) |index| {
+                        const start = index * lhs.string.len;
+                        const end = start + lhs.string.len;
+                        @memcpy(buf[start..end], lhs.string);
+                    }
+
+                    break :blk Value{ .string = buf };
+                },
+                inline else => {
+                    self.diagnostics.report("Attempted to concatenate string with non-string value: {s}", .{rhs});
+                    return error.UnexpectedValueType;
+                },
+            },
+            else => {
+                self.diagnostics.report("Attempted to concatenate string with non-string value: {s}", .{rhs});
+                return error.UnexpectedValueType;
+            },
+        };
+        try self.pushOrError(result);
+        return;
+    }
     if (lhs != .number or rhs != .number) {
         self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ lhs, rhs });
         return error.UnexpectedValueType;

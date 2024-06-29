@@ -232,6 +232,10 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             const index = try self.addConstant(.{ .number = value });
             try self.addInstruction(.{ .@"const" = index });
         },
+        .string => |value| {
+            const index = try self.addConstant(.{ .string = value });
+            try self.addInstruction(.{ .@"const" = index });
+        },
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
         inline else => std.debug.panic("unexpected expression type: {s}", .{expression}),

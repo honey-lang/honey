@@ -1,7 +1,7 @@
 const std = @import("std");
 const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
-const Evaluator = @import("Evaluator.zig");
+const Evaluator = @import("evaluator/Evaluator.zig");
 
 pub fn rand(_: *Evaluator, args: []const Evaluator.Value) !?Evaluator.Value {
     var prng = std.rand.DefaultPrng.init(blk: {

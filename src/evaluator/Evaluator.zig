@@ -195,7 +195,7 @@ pub fn init(ally: std.mem.Allocator, env: *Environment) Self {
         .stdin = std.io.getStdIn().reader(),
         .builtins = std.StringHashMap(BuiltinFn).init(ally),
     };
-    self.addBuiltinLibrary(@import("builtins.zig"));
+    self.addBuiltinLibrary(@import("../builtins.zig"));
     return self;
 }
 

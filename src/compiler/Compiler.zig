@@ -144,9 +144,18 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             // pop the result of the statement off the stack after it's done
             try self.addInstruction(.pop);
         },
-        // .variable => |inner| {
+        .variable => |inner| {
+            const index = try self.addConstant(.{ .identifier = inner.name });
+            try self.compileExpression(inner.expression);
 
-        // },
+            try self.addInstruction(.{ .declare_global = index });
+        },
+        .assignment => |inner| {
+            const index = try self.addConstant(.{ .identifier = inner.name });
+            try self.compileExpression(inner.expression);
+
+            try self.addInstruction(.{ .set_global = index });
+        },
         .block => |inner| {
             for (inner.statements) |stmt| {
                 try self.compileStatement(stmt);
@@ -234,8 +243,9 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         },
         .while_expr => |inner| {
             var jif_target: CompiledInstruction = undefined;
-            try self.compileExpression(inner.condition.*);
+            // the loop should start before the condition
             const loop_start_instr = try self.getLastInstruction();
+            try self.compileExpression(inner.condition.*);
 
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
             jif_target = try self.getLastInstruction();
@@ -243,7 +253,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             for (inner.body.statements) |statement| {
                 try self.compileStatement(statement);
             }
-            try self.addInstruction(.{ .jump = @intCast(loop_start_instr.index) });
+            try self.addInstruction(.{ .jump = @intCast(loop_start_instr.nextInstructionIndex()) });
             const jump_target = try self.getLastInstruction();
             try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.nextInstructionIndex()) });
 
@@ -260,6 +270,17 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         },
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
+        .identifier => |value| {
+            const index = try self.addConstant(.{ .identifier = value });
+            try self.addInstruction(.{ .get_variable = index });
+        },
+        .builtin => |inner| {
+            const index = try self.addConstant(.{ .identifier = inner.name });
+            for (inner.arguments) |arg| {
+                try self.compileExpression(arg);
+            }
+            try self.addInstruction(.{ .call_builtin = .{ .constant_index = index, .arg_count = @as(u16, @intCast(inner.arguments.len)) } });
+        },
         inline else => std.debug.panic("unexpected expression type: {s}", .{expression}),
     }
 }

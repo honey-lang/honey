@@ -6,10 +6,37 @@ const Value = @import("value.zig").Value;
 
 const Self = @This();
 
+const MagicSeparatorSeq = &[_]u8{ 0xff, 0xfe, 0xfd, 0xfc };
+
 /// The generated instructions
 instructions: []const u8,
 /// The constant pool for which the instructions can refer to
 constants: []const Value,
+
+pub fn fromRaw(reader: anytype, allocator: std.mem.Allocator) !Self {
+    const list = std.ArrayList(u8).init(allocator);
+    errdefer list.deinit();
+    _ = reader;
+
+    @panic("not implemented yet");
+}
+
+pub fn raw(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error![]const u8 {
+    const list = std.ArrayList(u8).init(allocator);
+    errdefer list.deinit();
+
+    // dumps the constant pool as raw bytes
+    for (self.constants) |constant| {
+        try list.append(@as(u8, @intFromEnum(constant)));
+    }
+
+    // separates the constant pool from the instructions with a magic sequence
+    try list.appendSlice(MagicSeparatorSeq);
+
+    try list.appendSlice(self.instructions);
+
+    return list.toOwnedSlice();
+}
 
 /// Dumps the formatted instruction data into the provided writer
 pub fn dump(self: Self, writer: anytype) !void {
@@ -56,6 +83,16 @@ fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytyp
         .jump, .jump_if_false => {
             const instr_idx = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {x:0>4}", .{instr_idx});
+        },
+        .declare_global, .set_global => {
+            const const_idx = std.mem.readInt(u16, operands[0..2], .big);
+            try writer.print(" {s}", .{self.constants[const_idx]});
+        },
+        .call_builtin => {
+            const const_idx = std.mem.readInt(u16, operands[0..2], .big);
+            const arg_count = std.mem.readInt(u16, operands[2..4], .big);
+
+            try writer.print(" {s} (arg count: {d})", .{ self.constants[const_idx], arg_count });
         },
         inline else => {},
     }

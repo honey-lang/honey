@@ -56,16 +56,14 @@ pub const Opcode = enum(u8) {
     call_builtin = 0x50,
     /// The `declare_global` opcode is used to declare a global variable.
     declare_global = 0x60,
-    /// The `get_global` opcode is used to get the value of a global variable.
-    get_global = 0x61,
     /// The `set_global` opcode is used to set the value of a global variable.
-    set_global = 0x62,
+    set_global = 0x61,
     /// The `declare_local` opcode is used to declare a local variable.
     declare_local = 0x70,
-    /// The `get_local` opcode is used to get the value of a local variable.
-    get_local = 0x71,
     /// The `set_local` opcode is used to set the value of a local variable.
-    set_local = 0x72,
+    set_local = 0x71,
+    /// The `get_variable` opcode is used to get the value of a variable. The check order is local -> global -> builtin.
+    get_variable = 0x80,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -135,13 +133,12 @@ pub const Instruction = union(Opcode) {
     @"and": void,
     @"or": void,
     not: void,
-    call_builtin: void,
-    declare_global: void,
-    get_global: void,
-    set_global: void,
+    call_builtin: struct { constant_index: u16, arg_count: u16 },
+    declare_global: u16,
+    set_global: u16,
     declare_local: void,
-    get_local: void,
     set_local: void,
+    get_variable: u16,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;
@@ -157,6 +154,11 @@ pub fn encode(value: anytype, writer: anytype) !void {
         .Float => {
             const value_bytes = @as([@sizeOf(value)]u8, @bitCast(value));
             try writer.writeAll(&value_bytes);
+        },
+        .Struct => |inner| {
+            inline for (inner.fields) |field| {
+                try encode(@field(value, field.name), writer);
+            }
         },
         .Void => {},
         inline else => @panic("Unsupported type: " ++ @typeName(ValueType)),

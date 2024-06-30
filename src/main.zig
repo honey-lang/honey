@@ -21,6 +21,8 @@ const Header =
 
 const Options =
     \\  -h, --help                Display this help menu and exit.
+    \\  -c, --compile             Compiles the input file to bytecode without running it.
+    \\  -o, --output <output>       The output file for the compiled bytecode. Defaults to the input file name with the .honc extension.
     \\  -r, --repl                Start the REPL.
     \\  -e, --engine <engine>     Select the engine to use: 'bytecode' or 'eval' (default: 'eval')
     \\  -d, --dump-bytecode       Dumps the bytecode before running (only used for the bytecode engine)
@@ -31,6 +33,17 @@ const Options =
 
 const Engine = enum { bytecode, eval };
 
+/// The parsers used to parse the arguments
+const ClapParsers = .{
+    .engine = clap.parsers.enumeration(Engine),
+    .input = clap.parsers.string,
+    .file = clap.parsers.string,
+    .output = clap.parsers.string,
+};
+
+/// The default extension for compiled files
+const DefaultCompiledExtension = "honc";
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -39,21 +52,19 @@ pub fn main() !void {
 
     const params = comptime clap.parseParamsComptime(Options);
     // the parsers for the arguments
-    const parsers = comptime .{
-        .engine = clap.parsers.enumeration(Engine),
-        .input = clap.parsers.string,
-        .file = clap.parsers.string,
-    };
     var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, &parsers, .{
-        .diagnostic = &diag,
-        .allocator = allocator,
-    }) catch |err| {
+    var res = clap.parse(clap.Help, &params, &ClapParsers, .{ .diagnostic = &diag, .allocator = allocator }) catch |err| {
         // Report useful error and exit
         diag.report(stdout, err) catch {};
         return;
     };
     defer res.deinit();
+
+    // print help and exit
+    // if (res.args.help != 0) {
+    //     try stdout.print(Header ++ Options, .{honey.version});
+    //     return;
+    // }
 
     var environment = Evaluator.Environment.init(allocator);
     defer environment.deinit();
@@ -76,6 +87,23 @@ pub fn main() !void {
             return;
         }
     };
+
+    if (res.args.compile != 0) {
+        const output_path: []const u8, const allocated: bool = if (res.args.output) |output| .{ output, false } else blk: {
+            const input_path: []const u8 = res.positionals[0];
+            const file_name = std.fs.path.basename(input_path);
+            const output = try std.mem.concat(allocator, u8, &.{ file_name, DefaultCompiledExtension });
+            break :blk .{ output, true };
+        };
+        // free the path if we allocated it
+        defer if (allocated) allocator.free(output_path);
+
+        const result = try honey.compile(input, .{ .allocator = allocator, .error_writer = std.io.getStdOut().writer() });
+        defer result.deinit();
+        // const output_file = try std.fs.cwd().createFile(output_path, .{});
+        // output_file.writer().writeAll(result.data.toSlice());
+        @panic("compilation is not implemented yet");
+    }
 
     if (res.args.engine == .bytecode) {
         const result = try honey.runInVm(input, .{

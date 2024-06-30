@@ -1,11 +1,10 @@
 const std = @import("std");
 const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
-// const Evaluator = @import("evaluator/Evaluator.zig");
-const Value = @import("compiler/value.zig").Value;
-const Vm = @import("./vm/Vm.zig");
+const Evaluator = @import("./Evaluator.zig");
+const Value = Evaluator.Value;
 
-pub fn rand(_: *Vm, args: []const Value) !?Value {
+pub fn rand(_: *Evaluator, args: []const Value) !?Value {
     var prng = std.rand.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
         std.posix.getrandom(std.mem.asBytes(&seed)) catch return error.GetRandomFailed;
@@ -37,7 +36,7 @@ pub fn rand(_: *Vm, args: []const Value) !?Value {
     };
 }
 
-pub fn print(_: *Vm, args: []const Value) !?Value {
+pub fn print(_: *Evaluator, args: []const Value) !?Value {
     const stderr = std.io.getStdErr().writer();
     for (args) |arg| {
         switch (arg) {
@@ -48,8 +47,8 @@ pub fn print(_: *Vm, args: []const Value) !?Value {
     return null;
 }
 
-pub fn println(vm: *Vm, args: []const Value) !?Value {
-    _ = try print(vm, args);
+pub fn println(evaluator: *Evaluator, args: []const Value) !?Value {
+    _ = try print(evaluator, args);
     const stderr = std.io.getStdErr().writer();
     stderr.writeAll("\n") catch return error.PrintFailed;
     return null;
@@ -59,7 +58,7 @@ pub fn println(vm: *Vm, args: []const Value) !?Value {
 const MaxPromptSize = 1024;
 
 /// Prints a given message and then prompts the user for input using stdin.
-pub fn prompt(_: *Vm, args: []const Value) !?Value {
+pub fn prompt(evaluator: *Evaluator, args: []const Value) !?Value {
     const stderr = std.io.getStdErr().writer();
     if (args.len != 1 or args[0] != .string) {
         return null;
@@ -83,15 +82,12 @@ pub fn prompt(_: *Vm, args: []const Value) !?Value {
     const trimmed = std.mem.trim(u8, stream.getWritten(), "\r\n");
 
     // create a new string within the evaluator's arena and return it
-    return .{ .string = trimmed };
+    return try evaluator.newString(trimmed);
 }
 
-pub fn memory(vm: *Vm, args: []const Value) !?Value {
+pub fn memory(evaluator: *Evaluator, args: []const Value) !?Value {
     if (args.len != 0) {
         return error.InvalidNumberOfArguments;
     }
-    _ = vm;
-
-    // todo: implement memory
-    return .{ .number = 0 };
+    return .{ .number = @floatFromInt(evaluator.arena.queryCapacity()) };
 }

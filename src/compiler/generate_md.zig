@@ -27,12 +27,29 @@ pub fn main() !void {
         try table.addRow(&.{
             std.fmt.comptimePrint("`{s}`", .{instruction.name}),
             std.fmt.comptimePrint("0x{x:0<2}", .{@intFromEnum(opcode)}),
-            @typeName(instruction.type),
+            comptime printTypeName(instruction.type),
         });
     }
 
     try file.writeAll(Header);
     try table.write(file.writer());
+}
+
+fn printTypeName(comptime T: type) []const u8 {
+    return switch (@typeInfo(T)) {
+        .Struct => |inner| name: {
+            const fields = inner.fields;
+            comptime var name: []const u8 = "";
+            inline for (fields, 0..) |field, index| {
+                name = name ++ printTypeName(field.type);
+                if (index != fields.len - 1) {
+                    name = name ++ std.fmt.comptimePrint(", ", .{});
+                }
+            }
+            break :name name;
+        },
+        else => @typeName(T),
+    };
 }
 
 const Table = struct {

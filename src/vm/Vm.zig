@@ -40,9 +40,13 @@ const VmError = error{
 
 /// The list used to keep track of objects in the VM
 const ObjectList = std.SinglyLinkedList(*Value);
+/// The map type used for variables in the VM
+const VariableMap = std.StringArrayHashMap(Value);
+/// The shape of the built-in functions in the VM
+const BuiltinFn = *const fn (*Self, []const Value) anyerror!?Value;
 
-/// The arena used for memory allocation in the VM
-arena: std.heap.ArenaAllocator,
+/// The allocator used for memory allocation in the VM
+ally: std.mem.Allocator,
 /// The bytecode object for the VM
 bytecode: Bytecode,
 /// The instructions to run in the VM
@@ -51,6 +55,12 @@ instructions: []const u8,
 constants: []const Value,
 /// The objects allocated in the arena for the VM (used for GC)
 objects: ObjectList,
+/// The global variables in the VM
+global_variables: VariableMap,
+/// The variables in the current lexical scope
+local_variables: VariableMap,
+/// Built-in functions for the VM
+builtins: std.StringArrayHashMap(BuiltinFn),
 /// Diagnostics for the VM
 diagnostics: utils.Diagnostics,
 /// Whether the VM is running or not
@@ -74,28 +84,35 @@ pub const VmOptions = struct {
 
 /// Initializes the VM with the needed values
 pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Self {
-    return Self{
-        .arena = std.heap.ArenaAllocator.init(ally),
+    var self = Self{
+        .ally = ally,
         .bytecode = bytecode,
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
         .objects = .{},
+        .global_variables = VariableMap.init(ally),
+        .local_variables = VariableMap.init(ally),
+        .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
         .options = options,
     };
+    self.addBuiltinLibrary(@import("../builtins.zig"));
+    return self;
 }
 
 /// Deinitializes the VM
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
     self.diagnostics.deinit();
-    self.arena.deinit();
+    self.builtins.deinit();
+    self.global_variables.deinit();
+    self.local_variables.deinit();
 }
 
 /// Returns the allocator attached to the arena
 fn allocator(self: *Self) std.mem.Allocator {
-    return self.arena.allocator();
+    return self.ally;
 }
 
 /// Collects garbage in the VM
@@ -103,8 +120,9 @@ fn collectGarbage(self: *Self) VmError!void {
     while (self.objects.popFirst()) |node| {
         switch (node.data.*) {
             .string => self.allocator().free(node.data.string),
+            .identifier => self.allocator().free(node.data.identifier),
             inline else => {
-                self.diagnostics.report("Unhandled object type encountered during garbage collection: {s}", .{@tagName(node.data)});
+                self.diagnostics.report("Unhandled object type encountered during garbage collection: {s}", .{@tagName(node.data.*)});
                 return error.GenericError;
             },
         }
@@ -121,6 +139,13 @@ fn trackObject(self: *Self, data: *Value) VmError!void {
     node.* = .{ .data = data, .next = self.objects.first };
 
     self.objects.prepend(node);
+}
+
+pub fn addBuiltinLibrary(self: *Self, comptime import: type) void {
+    const decls = @typeInfo(import).Struct.decls;
+    inline for (decls) |decl| {
+        self.builtins.put(decl.name, @field(import, decl.name)) catch unreachable;
+    }
 }
 
 /// Returns the last value popped from the stack
@@ -146,6 +171,11 @@ pub fn run(self: *Self) VmError!void {
 fn execute(self: *Self, instruction: Opcode) VmError!void {
     if (!self.running) {
         return;
+    }
+
+    if (self.objects.len() > 10240) {
+        std.debug.print("Collecting garbage...\n", .{});
+        try self.collectGarbage();
     }
 
     switch (instruction) {
@@ -188,6 +218,66 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .jump => {
             const index = try self.fetchNumber(u16);
             self.program_counter = index;
+        },
+        .declare_global => {
+            const variable_name = try self.fetchConstant();
+            const value = try self.popOrError();
+            if (self.global_variables.contains(variable_name.identifier)) {
+                self.diagnostics.report("Global variable already declared: {s}", .{variable_name.identifier});
+                return error.GenericError;
+            }
+            self.global_variables.putNoClobber(variable_name.identifier, value) catch |err| {
+                self.diagnostics.report("Failed to declare global variable: {any}", .{err});
+                return error.GenericError;
+            };
+        },
+        .set_global => {
+            const variable_name = try self.fetchConstant();
+            const value = try self.popOrError();
+            self.global_variables.put(variable_name.identifier, value) catch |err| {
+                self.diagnostics.report("Failed to set global variable: {any}", .{err});
+                return error.GenericError;
+            };
+        },
+        .get_variable => {
+            const variable_name = try self.fetchConstant();
+            const value = if (self.local_variables.get(variable_name.identifier)) |local|
+                local
+            else if (self.global_variables.get(variable_name.identifier)) |global|
+                global
+            else {
+                // todo: builtin variables
+                self.diagnostics.report("Variable not found: {s}", .{variable_name.identifier});
+                return error.GenericError;
+            };
+            try self.pushOrError(value);
+        },
+        .call_builtin => {
+            const builtin = try self.fetchConstant();
+            const arg_count = try self.fetchNumber(u16);
+            var args_list = std.ArrayList(Value).init(self.allocator());
+            for (0..arg_count) |_| {
+                const arg = try self.popOrError();
+                args_list.append(arg) catch |err| {
+                    self.diagnostics.report("Failed to append argument to builtin arguments: {any}", .{err});
+                    return error.GenericError;
+                };
+            }
+            const args = args_list.toOwnedSlice() catch |err| {
+                self.diagnostics.report("Failed to convert arguments to owned slice: {any}", .{err});
+                return error.GenericError;
+            };
+            defer self.allocator().free(args);
+            std.mem.reverse(Value, args);
+            const run_func = self.builtins.get(builtin.identifier) orelse {
+                self.diagnostics.report("Builtin not found: @{s}", .{builtin.identifier});
+                return error.GenericError;
+            };
+            const output = run_func(self, args) catch |err| {
+                self.diagnostics.report("Failed to run builtin function: {any}", .{err});
+                return error.GenericError;
+            };
+            try self.pushOrError(if (output) |value| value else Value.Void);
         },
         inline else => {
             self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
@@ -238,8 +328,8 @@ fn fetchInstruction(self: *Self) VmError!Opcode {
 /// Fetches the next `count` bytes from the program
 fn fetchAmount(self: *Self, count: usize) VmError![]const u8 {
     const end = self.program_counter + count;
-    if (end >= self.instructions.len) {
-        self.diagnostics.report("Program counter ({d}) exceeded bounds of program ({d}).", .{ self.program_counter, self.instructions.len });
+    if (end > self.instructions.len) {
+        self.diagnostics.report("Program counter ({d}) exceeded bounds of program when fetching slice ({d}).", .{ end, self.instructions.len });
         return error.OutOfProgramBounds;
     }
     defer self.program_counter += count;
@@ -391,32 +481,19 @@ fn executeComparison(self: *Self, opcode: Opcode) VmError!void {
 /// Executes a logical instruction
 fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
     const rhs: Value, const lhs: Value = try self.popCountOrError(2);
-    const result = nativeBoolToValue(switch (opcode) {
-        .@"and", .@"or" => blk: {
-            if (lhs != .boolean or rhs != .boolean) {
-                self.diagnostics.report("Attempted to perform arithmetic on non-boolean values: {s} and {s}", .{ lhs, rhs });
-                return error.UnexpectedValueType;
-            }
-            break :blk switch (opcode) {
-                .@"and" => lhs.boolean and rhs.boolean,
-                .@"or" => lhs.boolean or rhs.boolean,
-                inline else => unreachable,
-            };
+    const result = switch (opcode) {
+        .@"and" => lhs.@"and"(rhs) catch |err| {
+            self.diagnostics.report("Failed to perform logical AND operation: {any}", .{err});
+            return error.GenericError;
         },
-        .eql, .neql => blk: {
-            if (lhs != .number or rhs != .number) {
-                self.diagnostics.report("Attempted to perform arithmetic on non-number values: {s} and {s}", .{ lhs, rhs });
-                return error.UnexpectedValueType;
-            }
-
-            break :blk switch (opcode) {
-                .eql => lhs.number == rhs.number,
-                .neql => lhs.number != rhs.number,
-                inline else => unreachable,
-            };
+        .@"or" => lhs.@"or"(rhs) catch |err| {
+            self.diagnostics.report("Failed to perform logical OR operation: {any}", .{err});
+            return error.GenericError;
         },
+        .eql => nativeBoolToValue(lhs.equal(rhs)),
+        .neql => nativeBoolToValue(!lhs.equal(rhs)),
         inline else => unreachable,
-    });
+    };
     try self.pushOrError(result);
 }
 

@@ -26,6 +26,25 @@ pub const Value = union(enum) {
     void: void,
     /// `string` represents a string object.
     string: []const u8,
+    /// `identifier` represents an identifier.
+    identifier: []const u8,
+
+    /// Calculates the maximum width of the payload in bytes.
+    pub inline fn maxWidth() usize {
+        comptime var max_width: usize = 0;
+        inline for (std.enums.values(Value)) |value| {
+            const current_width = value.width();
+            if (current_width > max_width) max_width = current_width;
+        }
+        return max_width;
+    }
+
+    /// Returns the width of the payload in bytes.
+    pub fn width(self: Value) usize {
+        return switch (self) {
+            inline else => |inner| @as(usize, @sizeOf(std.meta.TagPayload(Value, inner))),
+        };
+    }
 
     pub fn isVoid(self: Value) bool {
         return self == .void;
@@ -37,6 +56,8 @@ pub const Value = union(enum) {
             .number => |value| if (other == .number) value == other.number else false,
             .boolean => |value| if (other == .boolean) value == other.boolean else false,
             .null => other == .null,
+            // todo: string hash comparison
+            .string => |value| if (other == .string) std.mem.eql(u8, value, other.string) else false,
             inline else => false,
         };
     }
@@ -152,6 +173,7 @@ pub const Value = union(enum) {
             .null => try writer.writeAll("null"),
             .void => try writer.writeAll("void"),
             .string => |value| try writer.print("\"{s}\"", .{value}),
+            .identifier => |value| try writer.print("{s}", .{value}),
             inline else => {},
         }
     }

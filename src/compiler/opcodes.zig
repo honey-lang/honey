@@ -52,6 +52,21 @@ pub const Opcode = enum(u8) {
     @"or" = 0x41,
     /// The `not` opcode is used to negate a value (e.g., `!true`).
     not = 0x42,
+    /// The `call_builtin` opcode is used to call a builtin function.
+    call_builtin = 0x50,
+    /// The `declare_global` opcode is used to declare a global variable.
+    declare_global = 0x60,
+    /// The `get_global` opcode is used to get the value of a global variable.
+    get_global = 0x61,
+    /// The `set_global` opcode is used to set the value of a global variable.
+    set_global = 0x62,
+    /// The `declare_local` opcode is used to declare a local variable.
+    declare_local = 0x70,
+    /// The `get_local` opcode is used to get the value of a local variable.
+    get_local = 0x71,
+    /// The `set_local` opcode is used to set the value of a local variable.
+    set_local = 0x72,
+
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
         return @intFromEnum(self);
@@ -64,6 +79,7 @@ pub const Opcode = enum(u8) {
 
     /// Returns the width of the opcode.
     pub fn width(self: Opcode) usize {
+        @setEvalBranchQuota(1500);
         return switch (self) {
             inline else => |inner| @sizeOf(std.meta.TagPayload(Instruction, inner)),
         };
@@ -119,6 +135,13 @@ pub const Instruction = union(Opcode) {
     @"and": void,
     @"or": void,
     not: void,
+    call_builtin: void,
+    declare_global: void,
+    get_global: void,
+    set_global: void,
+    declare_local: void,
+    get_local: void,
+    set_local: void,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

@@ -6,7 +6,7 @@ const Self = @This();
 stdout: std.fs.File.Writer,
 
 pub fn init() Self {
-    return .{ .stdout = std.io.getStdOut() };
+    return .{ .stdout = std.io.getStdOut().writer() };
 }
 
 pub fn writeColor(_: Self) void {}

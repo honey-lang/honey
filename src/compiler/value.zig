@@ -42,7 +42,7 @@ pub const Value = union(enum) {
     /// Returns the width of the payload in bytes.
     pub fn width(self: Value) usize {
         return switch (self) {
-            inline else => |inner| @as(usize, @sizeOf(std.meta.TagPayload(Value, inner))),
+            inline else => |inner| @as(usize, @sizeOf(@TypeOf(inner))),
         };
     }
 

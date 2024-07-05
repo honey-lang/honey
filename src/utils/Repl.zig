@@ -4,6 +4,7 @@ const Self = @This();
 
 const Command = struct {
     const RunFn = *const fn () anyerror!void;
+
     name: []const u8,
     description: []const u8,
     run: RunFn,
@@ -28,7 +29,7 @@ pub fn init(allocator: std.mem.Allocator, max_size: usize) !Self {
 }
 
 pub fn initWithPrefix(allocator: std.mem.Allocator, max_size: usize, prefix: u8) !Self {
-    const self = try Self.init(allocator, max_size);
+    var self = try Self.init(allocator, max_size);
     self.prefix = prefix;
     return self;
 }

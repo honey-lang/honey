@@ -22,7 +22,7 @@ pub fn fromRaw(reader: anytype, allocator: std.mem.Allocator) !Self {
 }
 
 pub fn raw(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error![]const u8 {
-    const list = std.ArrayList(u8).init(allocator);
+    var list = std.ArrayList(u8).init(allocator);
     errdefer list.deinit();
 
     // dumps the constant pool as raw bytes

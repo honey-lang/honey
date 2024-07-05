@@ -77,14 +77,14 @@ pub const Opcode = enum(u8) {
 
     /// Returns the width of the opcode.
     pub fn width(self: Opcode) usize {
-        @setEvalBranchQuota(1500);
         return switch (self) {
-            inline else => |inner| @sizeOf(std.meta.TagPayload(Instruction, inner)),
+            inline else => |inner| @sizeOf(inner.payload()),
         };
     }
 
     /// Returns the payload of the opcode.
     pub fn payload(self: Opcode) type {
+        @setEvalBranchQuota(1500);
         return switch (self) {
             inline else => |inner| std.meta.TagPayload(Instruction, inner),
         };

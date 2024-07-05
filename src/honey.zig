@@ -1,12 +1,12 @@
 const std = @import("std");
-const Lexer = @import("lexer/Lexer.zig");
-const TokenData = @import("lexer/token.zig").TokenData;
-const ast = @import("parser/ast.zig");
-const Parser = @import("parser/Parser.zig");
-const Compiler = @import("compiler/Compiler.zig");
-const Bytecode = @import("compiler/Bytecode.zig");
-const Evaluator = @import("evaluator/Evaluator.zig");
-const Vm = @import("vm/Vm.zig");
+pub const Lexer = @import("lexer/Lexer.zig");
+pub const TokenData = @import("lexer/token.zig").TokenData;
+pub const ast = @import("parser/ast.zig");
+pub const Parser = @import("parser/Parser.zig");
+pub const Compiler = @import("compiler/Compiler.zig");
+pub const Bytecode = @import("compiler/Bytecode.zig");
+pub const Evaluator = @import("evaluator/Evaluator.zig");
+pub const Vm = @import("vm/Vm.zig");
 
 pub const version = "0.0.1";
 
@@ -44,15 +44,16 @@ pub fn parse(input: []const u8, options: ParseOptions) !Result(ast.Program) {
 pub const RunOptions = struct {
     allocator: std.mem.Allocator,
     environment: *Evaluator.Environment,
+    error_writer: std.fs.File.Writer,
 };
 
 pub fn run(input: []const u8, options: RunOptions) !Result(?Evaluator.Value) {
-    const result = try parse(input, .{ .allocator = options.allocator });
+    var result = try parse(input, .{ .allocator = options.allocator, .error_writer = options.error_writer });
     const allocator = result.arena.allocator();
     var evaluator = Evaluator.init(allocator, options.environment);
     defer evaluator.deinit();
     return Result(?Evaluator.Value){
-        .data = evaluator.run(result.data),
+        .data = try evaluator.run(result.data),
         .arena = result.arena,
     };
 }

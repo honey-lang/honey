@@ -336,8 +336,8 @@ pub const Expression = union(enum) {
     }
 };
 
-pub fn createPrefixStatement(operator: Operator, rhs: Expression, terminated: bool) Statement {
-    return .{ .expression = .{ .expression = .{ .prefix = .{ .operator = operator, .rhs = &rhs } }, .terminated = terminated } };
+pub fn createPrefixStatement(operator: Operator, rhs: *Expression, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .prefix = .{ .operator = operator, .rhs = rhs } }, .terminated = terminated } };
 }
 
 pub fn createBuiltinStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {

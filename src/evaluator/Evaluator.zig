@@ -35,7 +35,7 @@ pub const Environment = struct {
     }
 
     pub fn functionExists(self: *Environment, name: []const u8) bool {
-        return self.functions.contains(name) or if (self.parent) |parent| parent.hasFunction(name) else false;
+        return self.functions.contains(name) or if (self.parent) |parent| parent.functionExists(name) else false;
     }
 
     pub fn getFunction(self: *Environment, name: []const u8) ?Function {
@@ -437,7 +437,11 @@ fn runAndExpect(input: []const u8, test_func: *const fn (?Value) anyerror!void) 
     const ally = std.testing.allocator;
     var env = Environment.init(ally);
     defer env.deinit();
-    const output = try honey.run(input, ally, &env);
+    const output = try honey.run(input, .{
+        .allocator = ally,
+        .environment = &env,
+        .error_writer = std.io.getStdErr().writer(),
+    });
     try test_func(output);
 }
 

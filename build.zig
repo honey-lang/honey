@@ -47,6 +47,18 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    // dedicated step for checking if the app compiles (ZLS)
+    const exe_check = b.addExecutable(.{
+        .name = "check",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_check.root_module.addImport("clap", clap.module("clap"));
+
+    const check = b.step("check", "Check if foo compiles");
+    check.dependOn(&exe_check.step);
+
     // Step for running unit tests
     const unit_tests = b.addTest(.{
         .root_source_file = b.path("src/tests.zig"),

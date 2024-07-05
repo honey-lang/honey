@@ -1,10 +1,11 @@
 const std = @import("std");
 const clap = @import("clap");
-const honey = @import("honey.zig");
+pub const honey = @import("honey.zig");
 const Repl = @import("utils/Repl.zig");
 const ast = @import("parser/ast.zig");
 const Parser = @import("parser/Parser.zig");
 const Evaluator = @import("evaluator/Evaluator.zig");
+const utils = @import("./utils/utils.zig");
 
 const Header =
     \\
@@ -48,6 +49,7 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+
     const stdout = std.io.getStdOut().writer();
 
     const params = comptime clap.parseParamsComptime(Options);
@@ -168,4 +170,30 @@ inline fn run(evaluator: *Evaluator, input: []const u8, allocator: std.mem.Alloc
 
 pub fn exit() !void {
     std.posix.exit(0);
+}
+
+// Recursively loads all declarations for ZLS checking
+comptime {
+    // zlsAnalyze(honey);
+}
+
+/// A small utility function to expose all declarations at runtime
+fn zlsAnalyze(comptime T: type) void {
+    inline for (declarations(T)) |decl| {
+        if (@TypeOf(@field(T, decl.name)) == type) {
+            zlsAnalyze(@field(T, decl.name));
+        }
+        _ = &@field(T, decl.name);
+    }
+}
+
+/// Returns all declarations of a type
+fn declarations(comptime T: type) []const std.builtin.Type.Declaration {
+    return switch (@typeInfo(T)) {
+        .Struct => |info| info.decls,
+        .Enum => |info| info.decls,
+        .Union => |info| info.decls,
+        .Opaque => |info| info.decls,
+        else => &.{},
+    };
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const utils = @import("../utils/utils.zig");
 const ast = @import("../parser/ast.zig");
+const honey = @import("../honey.zig");
 const opcodes = @import("opcodes.zig");
 const Opcode = opcodes.Opcode;
 const Instruction = opcodes.Instruction;
@@ -24,6 +25,8 @@ const CompiledInstruction = struct {
 const MaxOffset = std.math.maxInt(u16);
 /// The maximum number of local variables that can be used in a function
 const MaxLocalVariables = std.math.maxInt(u8) + 1;
+/// The map type used to store global identifiers declared in the program
+const GlobalIdentifierMap = std.StringArrayHashMap(void);
 
 const Self = @This();
 
@@ -42,6 +45,8 @@ const Error = error{
     UnsupportedExpression,
     /// Occurs when the compiler's allocator is out of memory
     OutOfMemory,
+    /// Occurs when a user tries to access a local variable that is out of bounds
+    LocalOutOfBounds,
     /// Occurs when a variable already exists in either the current scope or a parent scope
     VariableAlreadyExists,
     /// Occurs when the compiler encounters an unexpected type
@@ -53,6 +58,8 @@ const Local = struct {
     name: []const u8,
     /// The depth of the scope the local variable was declared in
     depth: u16,
+    /// Whether the local variable is a constant
+    is_const: bool,
 };
 
 /// A simple arena allocator used when compiling into bytecode
@@ -65,6 +72,8 @@ diagnostics: utils.Diagnostics,
 instructions: std.ArrayList(u8),
 /// A list of constant expressions used in the program
 constants: std.ArrayList(Value),
+/// A list of global identifiers declared in the program
+declared_global_identifiers: GlobalIdentifierMap,
 /// The last instruction that was added
 last_compiled_instr: ?CompiledInstruction = null,
 /// The instruction before the last instruction
@@ -84,6 +93,7 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
         .program = program,
         .instructions = std.ArrayList(u8).init(ally),
         .constants = std.ArrayList(Value).init(ally),
+        .declared_global_identifiers = GlobalIdentifierMap.init(ally),
     };
 }
 
@@ -93,6 +103,7 @@ pub fn deinit(self: *Self) void {
     self.diagnostics.deinit();
     self.instructions.deinit();
     self.constants.deinit();
+    self.declared_global_identifiers.deinit();
 }
 
 /// Adds an operation to the bytecode
@@ -155,6 +166,14 @@ inline fn getLocals(self: *Self) []Local {
     return self.local_variables[0..self.used_local_variables];
 }
 
+/// Returns a local variable by offset or errors if the index is out of bounds
+inline fn getLocal(self: *Self, offset: u16) Error!Local {
+    if (offset < 0 or offset >= self.used_local_variables) {
+        return Error.LocalOutOfBounds;
+    }
+    return self.local_variables[offset];
+}
+
 /// Returns the last local variable
 /// This will panic or have UB if there are no local variables
 inline fn getLastLocal(self: *Self) Local {
@@ -163,17 +182,37 @@ inline fn getLastLocal(self: *Self) Local {
 
 /// Returns true if there is a local variable with the given name
 inline fn hasLocal(self: *Self, name: []const u8) bool {
-    return self.findLocal(name) != null;
+    return self.resolveLocalOffset(name) != null;
 }
 
-/// Finds a local variable by name and returns its index
-inline fn findLocal(self: *Self, name: []const u8) ?u16 {
-    for (self.getLocals(), 0..) |local, index| {
+/// Finds a local variable by name and returns its offset
+inline fn resolveLocalOffset(self: *Self, name: []const u8) ?u16 {
+    for (self.getLocals(), 0..) |local, offset| {
         if (std.mem.eql(u8, local.name, name)) {
-            return @intCast(index);
+            return @intCast(offset);
         }
     }
     return null;
+}
+
+/// Finds a local variable by name and returns it
+inline fn resolveLocal(self: *Self, name: []const u8) ?Local {
+    for (self.getLocals()) |local| {
+        if (std.mem.eql(u8, local.name, name)) {
+            return local;
+        }
+    }
+    return null;
+}
+
+/// Returns true if there is a global variable/constant declared with the given name
+fn hasGlobal(self: *Self, name: []const u8) bool {
+    return self.declared_global_identifiers.contains(name);
+}
+
+/// Marks a global variable/constant as declared with the given name
+fn markGlobal(self: *Self, name: []const u8) !void {
+    try self.declared_global_identifiers.put(name, {});
 }
 
 /// Compiles the program into bytecode
@@ -196,10 +235,16 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         .variable => |inner| {
             // declare a global variable if we're at the top level
             if (self.scope_depth <= 0) {
+                if (self.hasGlobal(inner.name)) {
+                    self.diagnostics.report("Identifier \"{s}\" already exists in the current scope", .{inner.name});
+                    return error.VariableAlreadyExists;
+                }
+
                 const index = try self.addConstant(.{ .identifier = inner.name });
                 try self.compileExpression(inner.expression);
 
-                try self.addInstruction(.{ .declare_global = index });
+                try self.markGlobal(inner.name);
+                try self.addInstruction(if (inner.type == .@"const") .{ .declare_const = index } else .{ .declare_var = index });
                 return;
             }
 
@@ -212,15 +257,27 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 }
             }
 
-            _ = try self.addLocal(inner.name);
+            _ = try self.addLocal(inner.name, inner.type == .@"const");
             try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {
             try self.compileExpression(inner.expression);
 
-            const instr: opcodes.Instruction = if (self.findLocal(inner.name)) |offset|
-                .{ .set_local = offset }
-            else global: {
+            const instr: opcodes.Instruction = if (self.resolveLocalOffset(inner.name)) |offset| local: {
+                // fetch local
+                const local = self.getLocal(offset) catch |err| {
+                    self.diagnostics.report("Local variable out of bounds: {s}", .{inner.name});
+                    return err;
+                };
+
+                // if local is a constant, error out
+                if (local.is_const) {
+                    self.diagnostics.report("Cannot reassign constant variable: {s}", .{inner.name});
+                    return error.VariableAlreadyExists;
+                }
+
+                break :local .{ .set_local = offset };
+            } else global: {
                 const index = try self.addConstant(.{ .identifier = inner.name });
                 break :global .{ .set_global = index };
             };
@@ -290,9 +347,13 @@ fn addConstant(self: *Self, value: Value) Error!u16 {
 }
 
 /// Attempts to add a local variable to the list of local variables and return its index
-fn addLocal(self: *Self, name: []const u8) Error!u16 {
+fn addLocal(self: *Self, name: []const u8, is_const: bool) Error!u16 {
     defer self.used_local_variables += 1;
-    self.local_variables[self.used_local_variables] = Local{ .name = name, .depth = self.scope_depth };
+    self.local_variables[self.used_local_variables] = Local{
+        .name = name,
+        .depth = self.scope_depth,
+        .is_const = is_const,
+    };
     return self.used_local_variables;
 }
 
@@ -370,7 +431,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
         .identifier => |value| {
-            if (self.findLocal(value)) |offset| {
+            if (self.resolveLocalOffset(value)) |offset| {
                 try self.addInstruction(.{ .get_local = offset });
             } else {
                 const index = try self.addConstant(.{ .identifier = value });
@@ -404,50 +465,85 @@ inline fn compileIfBody(self: *Self, body: ast.IfExpression.Body) Error!void {
     }
 }
 
-test "test simple addition compilation" {
+/// Helper function that compiles a source and tests it against a provided function
+inline fn compileAndTest(source: []const u8, test_fn: *const fn (bytecode: Bytecode) anyerror!void) !void {
     const ally = std.testing.allocator;
 
     var program = ast.Program.init(ally);
     defer program.deinit();
 
-    // (1 + 2)
-    var lhs = ast.Expression{ .number = 1 };
-    var rhs = ast.Expression{ .number = 2 };
-    try program.add(ast.createBinaryStatement(&lhs, .plus, &rhs, false));
+    const result = try honey.parse(source, .{
+        .allocator = ally,
+        .error_writer = std.io.getStdErr().writer(),
+    });
+    defer result.deinit();
 
-    var compiler = Self.init(ally, program);
+    var compiler = Self.init(ally, result.data);
     defer compiler.deinit();
 
     const bytecode = try compiler.compile();
-
-    const expected_bytes = opcodes.make(&[_]Instruction{
-        .{ .@"const" = 0x00 },
-        .{ .@"const" = 0x01 },
-        .add,
-        .pop,
-    });
-    try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
-    try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 } }, bytecode.constants);
+    try test_fn(bytecode);
 }
 
-test "ensure compiler errors on existing variable" {
+/// Helper function that compiles a source and tests that it errors via a provided function
+inline fn compileAndTestError(source: []const u8, test_fn: *const fn (bytecode_union: anytype) anyerror!void) !void {
     const ally = std.testing.allocator;
 
     var program = ast.Program.init(ally);
     defer program.deinit();
 
-    // declare a variable
-    const variable_1 = ast.createVariableStatement(.let, "test", ast.Expression{ .number = 1 });
-    // declare a variable with the same name
-    const variable_2 = ast.createVariableStatement(.let, "test", ast.Expression{ .number = 2 });
+    const result = try honey.parse(source, .{
+        .allocator = ally,
+        .error_writer = std.io.getStdErr().writer(),
+    });
+    defer result.deinit();
 
-    const statements = [_]ast.Statement{ variable_1, variable_2 };
-    const block = ast.createBlockStatement(&statements);
-    try program.add(block);
-
-    var compiler = Self.init(ally, program);
+    var compiler = Self.init(ally, result.data);
     defer compiler.deinit();
 
     const err = compiler.compile();
-    try std.testing.expectError(Error.VariableAlreadyExists, err);
+    try test_fn(err);
+}
+
+test "test simple addition compilation" {
+    try compileAndTest("1 + 2", struct {
+        fn run(bytecode: Bytecode) anyerror!void {
+            const expected_bytes = opcodes.make(&[_]Instruction{
+                .{ .@"const" = 0x00 },
+                .{ .@"const" = 0x01 },
+                .add,
+                .pop,
+            });
+            try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
+            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 } }, bytecode.constants);
+        }
+    }.run);
+}
+
+test "ensure compiler errors on existing variable" {
+    const source =
+        \\{
+        \\  let test = 1;
+        \\  let test = 2;
+        \\}
+    ;
+    try compileAndTestError(source, struct {
+        fn run(bytecode_union: anytype) anyerror!void {
+            try std.testing.expectError(Error.VariableAlreadyExists, bytecode_union);
+        }
+    }.run);
+}
+
+test "ensure compiler errors on reassignment of const variable" {
+    const source =
+        \\{
+        \\  const test = 1;
+        \\  test = 2;
+        \\}
+    ;
+    try compileAndTestError(source, struct {
+        fn run(bytecode_union: anytype) anyerror!void {
+            try std.testing.expectError(Error.VariableAlreadyExists, bytecode_union);
+        }
+    }.run);
 }

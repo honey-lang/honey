@@ -10,17 +10,18 @@
 // // variadic arguments can be passed to @println
 // @println(greeting, ", ", name, "!");
 
+const ITERATIONS = 5;
+let ITERATIONS = 10;
+
+@println("Iterations: ", ITERATIONS);
+
 {
-    let i = 2;
-    let j = 1;
-    {
-        let k = i + j;
-        @println(k);
-        k = 5;
+    let i = "3.14";
+    let j = "159";
 
-    }
+    let pi = @parse_number(i + j);
 
-    @println("Memory Usage: ", @memory() / 1024, " KB");
+    @println("Pi: ", pi);
 }
 
 // generate a random number between 1 and 100

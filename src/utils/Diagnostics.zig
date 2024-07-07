@@ -37,7 +37,7 @@ pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
 
 /// Dumps the error messages to the provided writer
 pub fn dump(self: *Self, writer: anytype) void {
-    writer.print("There were {d} errors reported during compilation\n", .{self.errorCount()}) catch unreachable;
+    writer.print("Errors ({d}):\n", .{self.errorCount()}) catch unreachable;
     for (self.errors.items) |msg| {
         writer.print("- {s}\n", .{msg}) catch unreachable;
     }

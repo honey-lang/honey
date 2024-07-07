@@ -57,6 +57,8 @@ instructions: []const u8,
 constants: []const Value,
 /// The objects allocated in the arena for the VM (used for GC)
 objects: ObjectList,
+/// The global constants in the VM
+global_constants: VariableMap,
 /// The global variables in the VM
 global_variables: VariableMap,
 /// Built-in functions for the VM
@@ -90,6 +92,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .instructions = bytecode.instructions,
         .constants = bytecode.constants,
         .objects = .{},
+        .global_constants = VariableMap.init(ally),
         .global_variables = VariableMap.init(ally),
         .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
@@ -105,8 +108,8 @@ pub fn deinit(self: *Self) void {
     self.stack.deinit();
     self.diagnostics.deinit();
     self.builtins.deinit();
+    self.global_constants.deinit();
     self.global_variables.deinit();
-    self.local_variables.deinit();
 }
 
 /// Returns the allocator attached to the arena
@@ -218,21 +221,33 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const index = try self.fetchNumber(u16);
             self.program_counter = index;
         },
-        .declare_global => {
-            const variable_name = try self.fetchConstant();
+        .declare_const, .declare_var => {
+            const decl_name = try self.fetchConstant();
             const value = try self.popOrError();
-            if (self.global_variables.contains(variable_name.identifier)) {
-                self.diagnostics.report("Global variable already declared: {s}", .{variable_name.identifier});
+
+            const map = if (instruction == .declare_const) &self.global_constants else &self.global_variables;
+            const map_name = if (instruction == .declare_const) "constant" else "variable";
+            if (map.contains(decl_name.identifier)) {
+                self.diagnostics.report("Global {s} already declared: {s}", .{
+                    map_name,
+                    decl_name.identifier,
+                });
                 return error.GenericError;
             }
-            self.global_variables.putNoClobber(variable_name.identifier, value) catch |err| {
-                self.diagnostics.report("Failed to declare global variable: {any}", .{err});
+            map.putNoClobber(decl_name.identifier, value) catch |err| {
+                self.diagnostics.report("Failed to declare global {s}: {any}", .{ map_name, err });
                 return error.GenericError;
             };
         },
         .set_global => {
             const variable_name = try self.fetchConstant();
+
             if (!self.global_variables.contains(variable_name.identifier)) {
+                // check if it's a constant & error if it is
+                if (self.global_constants.contains(variable_name.identifier)) {
+                    self.diagnostics.report("Unable to reassign constant: {s}", .{variable_name.identifier});
+                    return error.GenericError;
+                }
                 self.diagnostics.report("Variable not found: {s}", .{variable_name.identifier});
                 return error.VariableNotFound;
             }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
 // const Evaluator = @import("evaluator/Evaluator.zig");
@@ -55,11 +56,19 @@ pub fn println(vm: *Vm, args: []const Value) !?Value {
     return null;
 }
 
+/// Returns the name of the operating system.
+pub fn os(vm: *Vm, args: []const Value) !?Value {
+    if (args.len != 0) {
+        return error.InvalidNumberOfArguments;
+    }
+
+    return try vm.createString(@tagName(builtin.os.tag));
+}
+
 /// The maximum size of a prompt message.
 const MaxPromptSize = 1024;
-
 /// Prints a given message and then prompts the user for input using stdin.
-pub fn prompt(_: *Vm, args: []const Value) !?Value {
+pub fn prompt(vm: *Vm, args: []const Value) !?Value {
     const stderr = std.io.getStdErr().writer();
     if (args.len != 1 or args[0] != .string) {
         return null;
@@ -83,7 +92,7 @@ pub fn prompt(_: *Vm, args: []const Value) !?Value {
     const trimmed = std.mem.trim(u8, stream.getWritten(), "\r\n");
 
     // create a new string within the evaluator's arena and return it
-    return .{ .string = trimmed };
+    return try vm.createString(trimmed);
 }
 
 pub fn memory(vm: *Vm, args: []const Value) !?Value {

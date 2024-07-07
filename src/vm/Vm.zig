@@ -113,7 +113,7 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Returns the allocator attached to the arena
-fn allocator(self: *Self) std.mem.Allocator {
+pub fn allocator(self: *Self) std.mem.Allocator {
     return self.ally;
 }
 
@@ -141,6 +141,25 @@ fn trackObject(self: *Self, data: *Value) VmError!void {
     node.* = .{ .data = data, .next = self.objects.first };
 
     self.objects.prepend(node);
+}
+
+/// Creates a string object in the VM
+pub fn createString(self: *Self, value: []const u8) !Value {
+    const string = self.allocator().dupe(u8, value) catch |err| {
+        self.diagnostics.report("Failed to allocate memory for string: {any}", .{err});
+        return error.OutOfMemory;
+    };
+
+    const created = self.allocator().create(Value) catch |err| {
+        self.diagnostics.report("Failed to allocate memory for string concatenation: {any}", .{err});
+        return error.OutOfMemory;
+    };
+
+    created.* = .{ .string = string };
+
+    // track object for GC
+    try self.trackObject(created);
+    return created.*;
 }
 
 pub fn addBuiltinLibrary(self: *Self, comptime import: type) void {

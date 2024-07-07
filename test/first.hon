@@ -1,27 +1,37 @@
-// create greeting
-let greeting = "Hello";
+// // create greeting
+// let greeting = "Hello";
 
-// The name to print next to "Hello, ". Reassignment of a constant is not allowed.
-const name = "World";
+// // The name to print next to "Hello, ". Reassignment of a constant is not allowed.
+// const name = "World";
 
-// replace the default greeting with a new one
-greeting = "Greetings";
+// // replace the default greeting with a new one
+// greeting = "Greetings";
 
-// variadic arguments can be passed to @println
-@println(greeting, ", ", name, "!");
+// // variadic arguments can be passed to @println
+// @println(greeting, ", ", name, "!");
+
+{
+    let i = 2;
+    let j = 1;
+    {
+        let k = i + j;
+        @println(k);
+        k = 5;
+
+    }
+
+    @println("Memory Usage: ", @memory() / 1024, " KB");
+}
 
 // generate a random number between 1 and 100
 const random = @rand(1, 100);
 
-const ITERATIONS = 10;
-const TEST_STRING = "test";
-
-let i = 0;
-let value = "t";
-while (i < ITERATIONS) {
-    value = value ** 2;
-    @println("Current: ", value);
-    i = i + 1;
-}
-@println("Result: ", value);
-
+// const ITERATIONS = 5;
+// const TEST_STRING = "test";
+// let i = 0;
+// let value = "t";
+// while (i < ITERATIONS) {
+//     value = value ** 2;
+//     @println("Current: ", value);
+//     i = i + 1;
+// }

@@ -32,6 +32,6 @@
 | `call_builtin`   | 0x50   | u16, u16 |
 | `declare_global` | 0x60   | u16      |
 | `set_global`     | 0x61   | u16      |
-| `declare_local`  | 0x70   | void     |
-| `set_local`      | 0x71   | void     |
-| `get_variable`   | 0x80   | u16      |
+| `get_global`     | 0x62   | u16      |
+| `set_local`      | 0x70   | u16      |
+| `get_local`      | 0x71   | u16      |

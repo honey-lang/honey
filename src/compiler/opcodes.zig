@@ -58,12 +58,12 @@ pub const Opcode = enum(u8) {
     declare_global = 0x60,
     /// The `set_global` opcode is used to set the value of a global variable.
     set_global = 0x61,
-    /// The `declare_local` opcode is used to declare a local variable.
-    declare_local = 0x70,
+    /// The `get_global` opcode is used to resolve the value of a global variable.
+    get_global = 0x62,
     /// The `set_local` opcode is used to set the value of a local variable.
-    set_local = 0x71,
-    /// The `get_variable` opcode is used to get the value of a variable. The check order is local -> global -> builtin.
-    get_variable = 0x80,
+    set_local = 0x70,
+    /// The `get_local` opcode is used to get the value of a local variable.
+    get_local = 0x71,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -136,9 +136,9 @@ pub const Instruction = union(Opcode) {
     call_builtin: struct { constant_index: u16, arg_count: u16 },
     declare_global: u16,
     set_global: u16,
-    declare_local: void,
-    set_local: void,
-    get_variable: u16,
+    get_global: u16,
+    set_local: u16,
+    get_local: u16,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

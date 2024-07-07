@@ -22,6 +22,8 @@ const CompiledInstruction = struct {
 
 /// The maximum offset that can be used in a jump instruction. Used as a placeholder until replaced with the actual offset
 const MaxOffset = std.math.maxInt(u16);
+/// The maximum number of local variables that can be used in a function
+const MaxLocalVariables = std.math.maxInt(u8) + 1;
 
 const Self = @This();
 
@@ -40,12 +42,25 @@ const Error = error{
     UnsupportedExpression,
     /// Occurs when the compiler's allocator is out of memory
     OutOfMemory,
+    /// Occurs when a variable already exists in either the current scope or a parent scope
+    VariableAlreadyExists,
+    /// Occurs when the compiler encounters an unexpected type
+    UnexpectedType,
+};
+
+const Local = struct {
+    /// The name of the local variable
+    name: []const u8,
+    /// The depth of the scope the local variable was declared in
+    depth: u16,
 };
 
 /// A simple arena allocator used when compiling into bytecode
 arena: std.heap.ArenaAllocator,
 /// The current program being compiled
 program: ast.Program,
+/// The diagnostics used by the compiler
+diagnostics: utils.Diagnostics,
 /// The instructions being generated
 instructions: std.ArrayList(u8),
 /// A list of constant expressions used in the program
@@ -54,11 +69,18 @@ constants: std.ArrayList(Value),
 last_compiled_instr: ?CompiledInstruction = null,
 /// The instruction before the last instruction
 penult_compiled_instr: ?CompiledInstruction = null,
+/// The local variables being tracked by the compiler
+local_variables: [MaxLocalVariables]Local = undefined,
+/// How many local variables are currently being used in the current scope
+used_local_variables: u8 = 0,
+/// The depth of the current scope
+scope_depth: u16 = 0,
 
 /// Initializes the compiler
 pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(ally),
+        .diagnostics = utils.Diagnostics.init(ally),
         .program = program,
         .instructions = std.ArrayList(u8).init(ally),
         .constants = std.ArrayList(Value).init(ally),
@@ -68,6 +90,7 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
 /// Deinitializes the compiler
 pub fn deinit(self: *Self) void {
     self.arena.deinit();
+    self.diagnostics.deinit();
     self.instructions.deinit();
     self.constants.deinit();
 }
@@ -93,8 +116,8 @@ fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
 fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction) Error!void {
     const new_opcode = std.meta.activeTag(new_instr);
     if (old.opcode != new_opcode) {
-        // std.debug.panic("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
-        return Error.OpcodeReplaceMismatch;
+        self.diagnostics.report("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
+        return error.OpcodeReplaceMismatch;
     }
 
     var stream = std.io.fixedBufferStream(self.instructions.items);
@@ -117,14 +140,40 @@ fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
     }
 }
 
-/// Returns the last instruction or panics if there is none
+/// Returns the last instruction or errors if there is none
 fn getLastInstruction(self: *Self) Error!CompiledInstruction {
     return self.last_compiled_instr orelse Error.InvalidInstruction;
 }
 
-/// Returns the previous instruction before the last instruction or panics if there is none
+/// Returns the previous instruction before the last instruction or errors if there is none
 fn getPreviousInstruction(self: *Self) Error!CompiledInstruction {
     return self.penult_compiled_instr orelse Error.InvalidInstruction;
+}
+
+/// Returns the local variables in the current scope
+inline fn getLocals(self: *Self) []Local {
+    return self.local_variables[0..self.used_local_variables];
+}
+
+/// Returns the last local variable
+/// This will panic or have UB if there are no local variables
+inline fn getLastLocal(self: *Self) Local {
+    return self.getLocals()[self.used_local_variables - 1];
+}
+
+/// Returns true if there is a local variable with the given name
+inline fn hasLocal(self: *Self, name: []const u8) bool {
+    return self.findLocal(name) != null;
+}
+
+/// Finds a local variable by name and returns its index
+inline fn findLocal(self: *Self, name: []const u8) ?u16 {
+    for (self.getLocals(), 0..) |local, index| {
+        if (std.mem.eql(u8, local.name, name)) {
+            return @intCast(index);
+        }
+    }
+    return null;
 }
 
 /// Compiles the program into bytecode
@@ -145,20 +194,53 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             try self.addInstruction(.pop);
         },
         .variable => |inner| {
-            const index = try self.addConstant(.{ .identifier = inner.name });
-            try self.compileExpression(inner.expression);
+            // declare a global variable if we're at the top level
+            if (self.scope_depth <= 0) {
+                const index = try self.addConstant(.{ .identifier = inner.name });
+                try self.compileExpression(inner.expression);
 
-            try self.addInstruction(.{ .declare_global = index });
+                try self.addInstruction(.{ .declare_global = index });
+                return;
+            }
+
+            // declare a local variable
+            // if the variable name already exists in the current scope, throw an error
+            for (self.getLocals()) |local| {
+                if (local.depth <= self.scope_depth and std.mem.eql(u8, local.name, inner.name)) {
+                    self.diagnostics.report("Variable {s} already exists in the current scope", .{inner.name});
+                    return error.VariableAlreadyExists;
+                }
+            }
+
+            _ = try self.addLocal(inner.name);
+            try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {
-            const index = try self.addConstant(.{ .identifier = inner.name });
             try self.compileExpression(inner.expression);
 
-            try self.addInstruction(.{ .set_global = index });
+            const instr: opcodes.Instruction = if (self.findLocal(inner.name)) |offset|
+                .{ .set_local = offset }
+            else global: {
+                const index = try self.addConstant(.{ .identifier = inner.name });
+                break :global .{ .set_global = index };
+            };
+            try self.addInstruction(instr);
         },
         .block => |inner| {
-            for (inner.statements) |stmt| {
-                try self.compileStatement(stmt);
+
+            // compile the block's statements & handle the scope depth
+            {
+                self.scope_depth += 1;
+                defer self.scope_depth -= 1;
+                for (inner.statements) |stmt| {
+                    try self.compileStatement(stmt);
+                }
+            }
+
+            // pop after the block is done
+            while (self.used_local_variables > 0 and self.getLastLocal().depth > self.scope_depth) {
+                try self.addInstruction(.pop);
+                self.used_local_variables -= 1;
             }
         },
         inline else => return Error.UnsupportedStatement,
@@ -166,16 +248,19 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
 }
 
 /// Resolves a prefix operator its instruction equivalent
-inline fn resolvePrefixToInstr(operator: ast.Operator) opcodes.Instruction {
+inline fn resolvePrefixToInstr(self: *Self, operator: ast.Operator) Error!opcodes.Instruction {
     return switch (operator) {
         .minus => .neg,
         .not => .not,
-        inline else => std.debug.panic("unexpected operator: {s}", .{operator}),
+        inline else => {
+            self.diagnostics.report("unexpected operator: {s}", .{operator});
+            return error.InvalidInstruction;
+        },
     };
 }
 
 /// Resolves an infix operator to its instruction equivalent
-inline fn resolveInfixToInstr(operator: ast.Operator) opcodes.Instruction {
+inline fn resolveInfixToInstr(self: *Self, operator: ast.Operator) Error!opcodes.Instruction {
     return switch (operator) {
         .plus => .add,
         .minus => .sub,
@@ -191,7 +276,10 @@ inline fn resolveInfixToInstr(operator: ast.Operator) opcodes.Instruction {
         .greater_than_equal => .gt_eql,
         .@"and" => .@"and",
         .@"or" => .@"or",
-        inline else => std.debug.panic("unexpected infix operator: {s}", .{operator}),
+        inline else => {
+            self.diagnostics.report("unexpected infix operator: {s}", .{operator});
+            return error.UnexpectedType;
+        },
     };
 }
 
@@ -201,17 +289,28 @@ fn addConstant(self: *Self, value: Value) Error!u16 {
     return @intCast(self.constants.items.len - 1);
 }
 
+/// Attempts to add a local variable to the list of local variables and return its index
+fn addLocal(self: *Self, name: []const u8) Error!u16 {
+    defer self.used_local_variables += 1;
+    self.local_variables[self.used_local_variables] = Local{ .name = name, .depth = self.scope_depth };
+    return self.used_local_variables;
+}
+
 /// Compiles an expression to opcodes
 fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
     switch (expression) {
         .binary => |inner| {
             try self.compileExpression(inner.lhs.*);
             try self.compileExpression(inner.rhs.*);
-            try self.addInstruction(resolveInfixToInstr(inner.operator));
+
+            const instr = try self.resolveInfixToInstr(inner.operator);
+            try self.addInstruction(instr);
         },
         .prefix => |inner| {
             try self.compileExpression(inner.rhs.*);
-            try self.addInstruction(resolvePrefixToInstr(inner.operator));
+
+            const instr = try self.resolvePrefixToInstr(inner.operator);
+            try self.addInstruction(instr);
         },
         .if_expr => |inner| {
             var jump_instr: CompiledInstruction = undefined;
@@ -271,8 +370,12 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
         .identifier => |value| {
-            const index = try self.addConstant(.{ .identifier = value });
-            try self.addInstruction(.{ .get_variable = index });
+            if (self.findLocal(value)) |offset| {
+                try self.addInstruction(.{ .get_local = offset });
+            } else {
+                const index = try self.addConstant(.{ .identifier = value });
+                try self.addInstruction(.{ .get_global = index });
+            }
         },
         .builtin => |inner| {
             const index = try self.addConstant(.{ .identifier = inner.name });
@@ -281,7 +384,10 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             }
             try self.addInstruction(.{ .call_builtin = .{ .constant_index = index, .arg_count = @as(u16, @intCast(inner.arguments.len)) } });
         },
-        inline else => std.debug.panic("unexpected expression type: {s}", .{expression}),
+        inline else => {
+            self.diagnostics.report("Unsupported expression type: {s}", .{expression});
+            return error.UnsupportedExpression;
+        },
     }
 }
 
@@ -322,4 +428,26 @@ test "test simple addition compilation" {
     });
     try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
     try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 } }, bytecode.constants);
+}
+
+test "ensure compiler errors on existing variable" {
+    const ally = std.testing.allocator;
+
+    var program = ast.Program.init(ally);
+    defer program.deinit();
+
+    // declare a variable
+    const variable_1 = ast.createVariableStatement(.let, "test", ast.Expression{ .number = 1 });
+    // declare a variable with the same name
+    const variable_2 = ast.createVariableStatement(.let, "test", ast.Expression{ .number = 2 });
+
+    const statements = [_]ast.Statement{ variable_1, variable_2 };
+    const block = ast.createBlockStatement(&statements);
+    try program.add(block);
+
+    var compiler = Self.init(ally, program);
+    defer compiler.deinit();
+
+    const err = compiler.compile();
+    try std.testing.expectError(Error.VariableAlreadyExists, err);
 }

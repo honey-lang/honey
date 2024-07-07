@@ -26,6 +26,8 @@ const VmError = error{
     StackUnderflow,
     /// `InvalidOpcode` is returned when an invalid opcode is encountered
     InvalidOpcode,
+    /// `VariableNotFound` is returned when a variable is not found in the VM
+    VariableNotFound,
     /// `UnhandledInstruction` is returned when an instruction is encountered that is not handled
     UnhandledInstruction,
     /// `OutOfProgramBounds` is returned when the program counter goes out of bounds
@@ -57,8 +59,6 @@ constants: []const Value,
 objects: ObjectList,
 /// The global variables in the VM
 global_variables: VariableMap,
-/// The variables in the current lexical scope
-local_variables: VariableMap,
 /// Built-in functions for the VM
 builtins: std.StringArrayHashMap(BuiltinFn),
 /// Diagnostics for the VM
@@ -91,7 +91,6 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .constants = bytecode.constants,
         .objects = .{},
         .global_variables = VariableMap.init(ally),
-        .local_variables = VariableMap.init(ally),
         .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
@@ -233,21 +232,44 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .set_global => {
             const variable_name = try self.fetchConstant();
+            if (!self.global_variables.contains(variable_name.identifier)) {
+                self.diagnostics.report("Variable not found: {s}", .{variable_name.identifier});
+                return error.VariableNotFound;
+            }
             const value = try self.popOrError();
             self.global_variables.put(variable_name.identifier, value) catch |err| {
                 self.diagnostics.report("Failed to set global variable: {any}", .{err});
                 return error.GenericError;
             };
         },
-        .get_variable => {
-            const variable_name = try self.fetchConstant();
-            const value = if (self.local_variables.get(variable_name.identifier)) |local|
-                local
-            else if (self.global_variables.get(variable_name.identifier)) |global|
+        .set_local => {
+            const offset = try self.fetchNumber(u16);
+            const value = self.stack.get(0) catch {
+                self.diagnostics.report("Stack is empty upon attempting to set local value at offset {d} ", .{offset});
+                return error.GenericError;
+            };
+
+            self.stack.set(offset, value) catch |err| {
+                self.diagnostics.report("Failed to set local variable at offset {d}: {any}", .{ offset, err });
+                return error.GenericError;
+            };
+        },
+        .get_global => {
+            const global_name = try self.fetchConstant();
+
+            const value = if (self.global_variables.get(global_name.identifier)) |global|
                 global
             else {
                 // todo: builtin variables
-                self.diagnostics.report("Variable not found: {s}", .{variable_name.identifier});
+                self.diagnostics.report("Variable not found: {s}", .{global_name.identifier});
+                return error.GenericError;
+            };
+            try self.pushOrError(value);
+        },
+        .get_local => {
+            const offset = try self.fetchNumber(u16);
+            const value = self.stack.get(offset) catch {
+                self.diagnostics.report("Local variable not found at offset {d}", .{offset});
                 return error.GenericError;
             };
             try self.pushOrError(value);
@@ -390,6 +412,7 @@ fn popCountOrError(self: *Self, comptime N: comptime_int) VmError!utils.Repeated
 /// Executes an arithmetic instruction
 fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
     const rhs: Value, const lhs: Value = try self.popCountOrError(2);
+
     // if the lhs is a string, we can assume we are concatenating
     if (lhs == .string) {
         const result = switch (opcode) {
@@ -481,6 +504,7 @@ fn executeComparison(self: *Self, opcode: Opcode) VmError!void {
 /// Executes a logical instruction
 fn executeLogical(self: *Self, opcode: Opcode) VmError!void {
     const rhs: Value, const lhs: Value = try self.popCountOrError(2);
+
     const result = switch (opcode) {
         .@"and" => lhs.@"and"(rhs) catch |err| {
             self.diagnostics.report("Failed to perform logical AND operation: {any}", .{err});

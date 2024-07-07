@@ -4,7 +4,7 @@ const std = @import("std");
 /// It is a LIFO (last in, first out) data structure.
 pub fn Stack(comptime T: type) type {
     return struct {
-        const Error = error{ OutOfMemory, StackEmpty };
+        const Error = error{ OutOfMemory, StackEmpty, OutOfBounds };
         const Self = @This();
 
         /// The structure used to store the data in the stack.
@@ -16,6 +16,22 @@ pub fn Stack(comptime T: type) type {
 
         pub fn deinit(self: *Self) void {
             self.data.deinit();
+        }
+
+        /// Returns the value at the specified index.
+        pub fn get(self: *Self, index: usize) Error!T {
+            if (index < 0 or index >= self.data.items.len) {
+                return error.OutOfBounds;
+            }
+            return self.data.items[index];
+        }
+
+        /// Sets the value at the specified index.
+        pub fn set(self: *Self, index: usize, value: T) Error!void {
+            if (index < 0 or index >= self.data.items.len) {
+                return error.OutOfBounds;
+            }
+            self.data.items[index] = value;
         }
 
         /// Pushes a value onto the stack.

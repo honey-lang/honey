@@ -70,8 +70,14 @@ pub fn compile(input: []const u8, options: CompileOptions) !Result(Bytecode) {
     });
     var arena = result.arena;
     var compiler = Compiler.init(arena.allocator(), result.data);
+
+    const program = compiler.compile() catch |err| {
+        compiler.diagnostics.dump(options.error_writer);
+        return err;
+    };
+
     return Result(Bytecode){
-        .data = try compiler.compile(),
+        .data = program,
         .arena = result.arena,
     };
 }

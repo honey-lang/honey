@@ -65,7 +65,7 @@ pub fn Cursor(comptime T: type) type {
             return .{ self.input[start..self.index], .{ .start = start, .end = end } };
         }
 
-        //// Reads values while the predicate returns true.
+        /// Reads values while the predicate returns true.
         pub fn readWhile(self: *Self, comptime pred: PredFn) ReadResult {
             const start: usize = self.index;
             while (self.canRead() and pred(self.current())) : (self.index += 1) {}

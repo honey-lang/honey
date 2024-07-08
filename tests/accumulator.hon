@@ -1,0 +1,7 @@
+const ITERATIONS = 100_000;
+
+let i = 0;
+while(i < ITERATIONS) {
+    @println("Iterations: ", i);
+    i += 1;
+}

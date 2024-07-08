@@ -1,3 +1,4 @@
+benchmarks/
 .zig-cache/
 zig-out/
 playground/

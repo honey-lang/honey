@@ -194,10 +194,10 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         return;
     }
 
-    if (self.objects.len() > 10240) {
-        std.debug.print("Collecting garbage...\n", .{});
-        try self.collectGarbage();
-    }
+    // if (self.objects.len() > 10240) {
+    //     std.debug.print("Collecting garbage...\n", .{});
+    //     try self.collectGarbage();
+    // }
 
     switch (instruction) {
         .@"const" => {
@@ -234,11 +234,15 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .jump_if_false => {
             const index = try self.fetchNumber(u16);
             const value = try self.popOrError();
-            if (!value.boolean) self.program_counter = index;
+            if (!value.boolean) self.program_counter += index;
         },
         .jump => {
             const index = try self.fetchNumber(u16);
-            self.program_counter = index;
+            self.program_counter += index;
+        },
+        .loop => {
+            const offset = try self.fetchNumber(u16);
+            self.program_counter -= offset;
         },
         .declare_const, .declare_var => {
             const decl_name = try self.fetchConstant();
@@ -253,6 +257,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 });
                 return error.GenericError;
             }
+
             map.putNoClobber(decl_name.identifier, value) catch |err| {
                 self.diagnostics.report("Failed to declare global {s}: {any}", .{ map_name, err });
                 return error.GenericError;
@@ -278,7 +283,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .set_local => {
             const offset = try self.fetchNumber(u16);
-            const value = self.stack.get(0) catch {
+            const value = self.stack.peek() catch {
                 self.diagnostics.report("Stack is empty upon attempting to set local value at offset {d} ", .{offset});
                 return error.GenericError;
             };
@@ -293,6 +298,8 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
 
             const value = if (self.global_variables.get(global_name.identifier)) |global|
                 global
+            else if (self.global_constants.get(global_name.identifier)) |constant|
+                constant
             else {
                 // todo: builtin variables
                 self.diagnostics.report("Variable not found: {s}", .{global_name.identifier});
@@ -306,6 +313,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.diagnostics.report("Local variable not found at offset {d}", .{offset});
                 return error.GenericError;
             };
+
             try self.pushOrError(value);
         },
         .call_builtin => {
@@ -393,14 +401,12 @@ fn fetchAmount(self: *Self, count: usize) VmError![]const u8 {
 }
 
 /// Fetches a number from the program
-fn fetchNumber(self: *Self, comptime T: type) VmError!T {
-    const type_info = @typeInfo(T);
-    const type_size = @sizeOf(T);
-    if (type_size / 8 != 0) {
+inline fn fetchNumber(self: *Self, comptime T: type) VmError!T {
+    if (@sizeOf(T) / 8 != 0) {
         @compileError("Invalid number type size");
     }
     const bytes = try self.fetchAmount(@sizeOf(T));
-    return switch (type_info) {
+    return switch (@typeInfo(T)) {
         .Int => std.mem.readInt(T, bytes[0..@sizeOf(T)], .big),
         .Float => utils.bytes.bytesToFloat(T, bytes, .big),
         inline else => @compileError("Invalid type"),
@@ -427,8 +433,8 @@ fn pushOrError(self: *Self, value: Value) VmError!void {
 
 /// Pops a value from the stack or reports and returns an error
 fn popOrError(self: *Self) VmError!Value {
-    self.last_popped = self.stack.pop() catch |err| {
-        self.diagnostics.report("Failed to pop value from stack: {any}", .{err});
+    self.last_popped = self.stack.pop() catch {
+        self.diagnostics.report("Failed to pop value from stack: {s}", .{self.bytecode});
         return error.StackUnderflow;
     };
     return self.last_popped.?;

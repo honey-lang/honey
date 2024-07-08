@@ -80,11 +80,11 @@ fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytyp
             const const_idx = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {s}", .{self.constants[const_idx]});
         },
-        .jump, .jump_if_false => {
+        .jump, .jump_if_false, .loop => {
             const instr_idx = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {x:0>4}", .{instr_idx});
         },
-        .declare_const, .declare_var, .set_global => {
+        .declare_const, .declare_var, .get_global, .set_global => {
             const const_idx = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {s}", .{self.constants[const_idx]});
         },

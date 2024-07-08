@@ -81,6 +81,17 @@ pub fn Cursor(comptime T: type) type {
             return self.input[self.index + 1];
         }
 
+        /// Returns the value at the given index or null if the index is out of bounds.
+        pub fn peekAhead(self: *Self, amount: usize) ?T {
+            if (self.index + amount >= self.input.len) return null;
+            return self.input[self.index + amount];
+        }
+
+        /// Returns a slice of the input from the current position to the given amount.
+        pub fn peekSlice(self: *Self, amount: usize) []const T {
+            return self.input[self.index..(self.index + amount)];
+        }
+
         /// Returns true if the cursor is not at the end.
         pub fn hasNext(self: *Self) bool {
             return self.index + 1 < self.input.len;

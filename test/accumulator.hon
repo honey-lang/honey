@@ -1,0 +1,9 @@
+const ITERATIONS = if (@os() == "windows") 100_000 else 1_000_000;
+
+{
+    let i = 0;
+    while(i < ITERATIONS) {
+        @println("Iterations: ", i);
+        i += 1;
+    }
+}

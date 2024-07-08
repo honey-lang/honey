@@ -110,7 +110,15 @@ fn readChar(self: *Self) ?TokenData {
     const data: Token = switch (self.cursor.current()) {
         '+' => self.readCharMap(&.{.{ '=', .plus_assignment }}, .plus),
         '-' => self.readCharMap(&.{.{ '=', .minus_assignment }}, .minus),
-        '*' => self.readCharMap(&.{ .{ '*', .doublestar }, .{ '=', .star_assignment } }, .star),
+        '*' => star: {
+            // todo: integrate this into the readCharMap function
+            if (std.mem.eql(u8, self.cursor.peekSlice(3), "**=")) {
+                defer self.cursor.advanceAmount(3);
+                break :star .doublestar_assignment;
+            } else {
+                break :star self.readCharMap(&.{ .{ '*', .doublestar }, .{ '=', .star_assignment } }, .star);
+            }
+        },
         // we do not need to worry about comments here because we parse them before we get to this point
         '/' => self.readCharMap(&.{.{ '=', .slash_assignment }}, .slash),
         '%' => self.readCharMap(&.{.{ '=', .modulo_assignment }}, .modulo),

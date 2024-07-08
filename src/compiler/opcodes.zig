@@ -12,6 +12,8 @@ pub const Opcode = enum(u8) {
     /// The `jump_if_false` opcode is used to jump to an instruction if the top of the stack is false.
     /// The top of the stack is popped.
     jump_if_false = 0x04,
+    /// The `loop` opcode is used to jump back `n` instructions.
+    loop = 0x05,
     /// The `true` opcode is used to push a true value onto the stack.
     true = 0x10,
     /// The `false` opcode is used to push a false value onto the stack.
@@ -115,6 +117,7 @@ pub const Instruction = union(Opcode) {
     pop: void,
     jump: u16,
     jump_if_false: u16,
+    loop: u16,
     true: void,
     false: void,
     null: void,

@@ -78,6 +78,8 @@ pub const TokenTag = enum {
     slash_assignment,
     /// .modulo_assignment represents the characters '%='
     modulo_assignment,
+    /// .doublestar_assignment represents the characters '**='
+    doublestar_assignment,
     /// .comma represents the character ','
     comma,
     /// .left_paren represents the character '('
@@ -131,6 +133,7 @@ pub const Token = union(TokenTag) {
     star_assignment,
     slash_assignment,
     modulo_assignment,
+    doublestar_assignment,
     comma,
     left_paren,
     right_paren,
@@ -151,7 +154,14 @@ pub const Token = union(TokenTag) {
 
     pub fn isAssignment(self: Token) bool {
         return switch (self) {
-            .assignment, .plus_assignment, .minus_assignment, .star_assignment, .slash_assignment, .modulo_assignment => true,
+            .assignment,
+            .plus_assignment,
+            .minus_assignment,
+            .star_assignment,
+            .slash_assignment,
+            .modulo_assignment,
+            .doublestar_assignment,
+            => true,
             inline else => false,
         };
     }

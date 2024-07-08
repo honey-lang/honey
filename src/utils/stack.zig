@@ -18,19 +18,31 @@ pub fn Stack(comptime T: type) type {
             self.data.deinit();
         }
 
-        /// Returns the value at the specified index.
-        pub fn get(self: *Self, index: usize) Error!T {
-            if (index < 0 or index >= self.data.items.len) {
+        /// Converts the stack index to the actual index in the data structure.
+        /// The index is reversed because the stack is a LIFO data structure.
+        inline fn resolveIndex(self: *Self, index: usize) Error!usize {
+            const actual_index = self.data.items.len - index - 1;
+            if (actual_index < 0 or actual_index >= self.data.items.len) {
                 return error.OutOfBounds;
             }
+            return actual_index;
+        }
+
+        /// Returns the top value of the stack or an error if the stack is empty.
+        pub fn peek(self: *Self) Error!T {
+            if (self.data.items.len == 0) {
+                return Error.StackEmpty;
+            }
+            return self.data.items[self.data.items.len - 1];
+        }
+
+        /// Returns the value at the specified index.
+        pub fn get(self: *Self, index: usize) Error!T {
             return self.data.items[index];
         }
 
         /// Sets the value at the specified index.
         pub fn set(self: *Self, index: usize, value: T) Error!void {
-            if (index < 0 or index >= self.data.items.len) {
-                return error.OutOfBounds;
-            }
             self.data.items[index] = value;
         }
 

@@ -1,1 +1,0 @@
-const result = @println("System command output: ", @system("clear"));

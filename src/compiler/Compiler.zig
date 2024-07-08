@@ -1,5 +1,6 @@
 const std = @import("std");
 const utils = @import("../utils/utils.zig");
+const Token = @import("../lexer/token.zig").Token;
 const ast = @import("../parser/ast.zig");
 const honey = @import("../honey.zig");
 const opcodes = @import("opcodes.zig");
@@ -237,7 +238,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             if (self.scope_depth <= 0) {
                 if (self.hasGlobal(inner.name)) {
                     self.diagnostics.report("Identifier \"{s}\" already exists in the current scope", .{inner.name});
-                    return error.VariableAlreadyExists;
+                    return Error.VariableAlreadyExists;
                 }
 
                 const index = try self.addConstant(.{ .identifier = inner.name });
@@ -253,7 +254,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             for (self.getLocals()) |local| {
                 if (local.depth <= self.scope_depth and std.mem.eql(u8, local.name, inner.name)) {
                     self.diagnostics.report("Variable {s} already exists in the current scope", .{inner.name});
-                    return error.VariableAlreadyExists;
+                    return Error.VariableAlreadyExists;
                 }
             }
 
@@ -261,9 +262,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {
-            try self.compileExpression(inner.expression);
-
-            const instr: opcodes.Instruction = if (self.resolveLocalOffset(inner.name)) |offset| local: {
+            if (self.resolveLocalOffset(inner.name)) |offset| {
                 // fetch local
                 const local = self.getLocal(offset) catch |err| {
                     self.diagnostics.report("Local variable out of bounds: {s}", .{inner.name});
@@ -273,18 +272,36 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 // if local is a constant, error out
                 if (local.is_const) {
                     self.diagnostics.report("Cannot reassign constant variable: {s}", .{inner.name});
-                    return error.VariableAlreadyExists;
+                    return Error.VariableAlreadyExists;
                 }
 
-                break :local .{ .set_local = offset };
-            } else global: {
+                if (!inner.isSimple()) {
+                    try self.addInstruction(.{ .get_local = offset });
+                    try self.compileExpression(inner.expression);
+
+                    const instr = try self.resolveAssignToInstr(inner.type);
+                    try self.addInstruction(instr);
+                } else {
+                    try self.compileExpression(inner.expression);
+                }
+
+                try self.addInstruction(.{ .set_local = offset });
+            } else {
                 const index = try self.addConstant(.{ .identifier = inner.name });
-                break :global .{ .set_global = index };
-            };
-            try self.addInstruction(instr);
+                if (!inner.isSimple()) {
+                    try self.addInstruction(.{ .get_global = index });
+                    try self.compileExpression(inner.expression);
+
+                    const instr = try self.resolveAssignToInstr(inner.type);
+                    try self.addInstruction(instr);
+                } else {
+                    try self.compileExpression(inner.expression);
+                }
+
+                try self.addInstruction(.{ .set_global = index });
+            }
         },
         .block => |inner| {
-
             // compile the block's statements & handle the scope depth
             {
                 self.scope_depth += 1;
@@ -302,6 +319,21 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         },
         inline else => return Error.UnsupportedStatement,
     }
+}
+
+inline fn resolveAssignToInstr(self: *Self, token: Token) Error!opcodes.Instruction {
+    return switch (token) {
+        .plus_assignment => .add,
+        .minus_assignment => .sub,
+        .star_assignment => .mul,
+        .slash_assignment => .div,
+        .modulo_assignment => .mod,
+        .doublestar_assignment => .pow,
+        inline else => {
+            self.diagnostics.report("Unsupported assignment type: {s}", .{token});
+            return error.UnsupportedStatement;
+        },
+    };
 }
 
 /// Resolves a prefix operator its instruction equivalent
@@ -376,35 +408,34 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .if_expr => |inner| {
             var jump_instr: CompiledInstruction = undefined;
             var jif_instr: CompiledInstruction = undefined;
-            for (inner.condition_list) |condition_data| {
-                // 1. compile condition
-                // 2. check if condition is false
-                try self.compileExpression(condition_data.condition.*);
-                try self.addInstruction(.{ .jump_if_false = MaxOffset });
-                jif_instr = try self.getLastInstruction();
-                try self.compileIfBody(condition_data.body);
-                try self.addInstruction(.{ .jump = MaxOffset });
-                jump_instr = try self.getLastInstruction();
-            }
 
-            // 3. if false, jump to alternative block if it exists or end of block if it doesn't
-            var jif_target: CompiledInstruction = try self.getLastInstruction();
+            // if the condition is false, jump to the else block
+            const condition_data = inner.condition_list[0];
+            try self.compileExpression(condition_data.condition.*);
+            try self.addInstruction(.{ .jump_if_false = MaxOffset });
+            jif_instr = try self.getLastInstruction();
 
-            // compile the if body if it exists or a void instruction if it doesn't
-            if (inner.alternative) |body| {
-                try self.compileIfBody(body);
+            // compile body & add jump after the body
+            try self.compileIfBody(condition_data.body);
+            try self.addInstruction(.{ .jump = MaxOffset });
+            jump_instr = try self.getLastInstruction();
+
+            // if there's an else block, compile it. otherwise, just add a void instruction
+            if (inner.alternative) |alternative| {
+                try self.compileIfBody(alternative);
             } else {
                 try self.addInstruction(.void);
             }
+            const post_expr = try self.getLastInstruction();
 
-            const jump_target = try self.getLastInstruction();
-            try self.replace(jump_instr, .{ .jump = @intCast(jump_target.nextInstructionIndex()) });
-            try self.replace(jif_instr, .{ .jump_if_false = @intCast(jif_target.nextInstructionIndex()) });
+            try self.replace(jump_instr, .{ .jump = @intCast(post_expr.nextInstructionIndex() - jump_instr.nextInstructionIndex()) });
+            try self.replace(jif_instr, .{ .jump_if_false = @intCast(jump_instr.index - jif_instr.index) });
         },
         .while_expr => |inner| {
             var jif_target: CompiledInstruction = undefined;
             // the loop should start before the condition
             const loop_start_instr = try self.getLastInstruction();
+
             try self.compileExpression(inner.condition.*);
 
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
@@ -413,9 +444,12 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             for (inner.body.statements) |statement| {
                 try self.compileStatement(statement);
             }
-            try self.addInstruction(.{ .jump = @intCast(loop_start_instr.nextInstructionIndex()) });
+
+            const instr = try self.getLastInstruction();
+            try self.addInstruction(.{ .loop = @intCast(instr.nextInstructionIndex() - loop_start_instr.index) });
             const jump_target = try self.getLastInstruction();
-            try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.nextInstructionIndex()) });
+
+            try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.index - jif_target.index) });
 
             // todo: only add a void instr if the loop body is empty
             try self.addInstruction(.void);

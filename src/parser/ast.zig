@@ -138,7 +138,13 @@ pub const AssignmentStatement = struct {
     expression: Expression,
 
     pub fn format(self: AssignmentStatement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        return writer.print("{s} = {s};", .{ self.name, self.expression });
+        return writer.print("{s} {s} {s};", .{ self.name, self.type, self.expression });
+    }
+
+
+    /// Returns true if the assignment is a simple assignment.
+    pub fn isSimple(self: AssignmentStatement) bool {
+        return self.type == .assignment;
     }
 };
 

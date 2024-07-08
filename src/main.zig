@@ -62,6 +62,8 @@ pub fn main() !void {
     };
     defer res.deinit();
 
+    const engine = res.args.engine orelse .bytecode;
+
     // print help and exit
     // if (res.args.help != 0) {
     //     try stdout.print(Header ++ Options, .{honey.version});
@@ -73,7 +75,7 @@ pub fn main() !void {
     var evaluator = Evaluator.init(allocator, &environment);
     // handle REPL separately
     if (res.args.repl != 0) {
-        try runRepl(&evaluator, allocator, res.args.engine orelse .eval);
+        try runRepl(&evaluator, allocator, engine);
         return;
     }
     const input = blk: {
@@ -107,7 +109,7 @@ pub fn main() !void {
         @panic("compilation is not implemented yet");
     }
 
-    if (res.args.engine == .bytecode) {
+    if (engine == .bytecode) {
         const result = try honey.runInVm(input, .{
             .allocator = allocator,
             .error_writer = std.io.getStdErr().writer(),

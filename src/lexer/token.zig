@@ -66,6 +66,8 @@ pub const TokenTag = enum {
     doublestar,
     /// .semicolon represents the character ';'
     semicolon,
+    /// .colon represents the character ':'
+    colon,
     /// .assignment represents the character '='
     assignment,
     /// .plus_assignment represents the characters '+='
@@ -127,6 +129,7 @@ pub const Token = union(TokenTag) {
     modulo,
     doublestar,
     semicolon,
+    colon,
     assignment,
     plus_assignment,
     minus_assignment,
@@ -148,6 +151,13 @@ pub const Token = union(TokenTag) {
             .string => |value| try writer.print("{{ .string = \"{s}\" }}", .{value}),
             .builtin => |value| try writer.print("{{ .builtin = \"{s}\" }}", .{value}),
             .invalid => |value| try writer.print("{{ .invalid = '{c}' }}", .{value}),
+            .assignment => try writer.writeAll("="),
+            .plus_assignment => try writer.writeAll("+="),
+            .minus_assignment => try writer.writeAll("-="),
+            .star_assignment => try writer.writeAll("*="),
+            .slash_assignment => try writer.writeAll("/="),
+            .modulo_assignment => try writer.writeAll("%="),
+            .doublestar_assignment => try writer.writeAll("**="),
             inline else => try writer.print(".{s}", .{@tagName(self)}),
         };
     }

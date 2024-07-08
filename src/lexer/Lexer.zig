@@ -132,6 +132,7 @@ fn readChar(self: *Self) ?TokenData {
         '}' => .right_brace,
         ',' => .comma,
         ';' => .semicolon,
+        ':' => .colon,
         // if we don't have a match, we return null from the function
         else => return null,
     };

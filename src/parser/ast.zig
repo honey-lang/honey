@@ -104,7 +104,7 @@ pub const Statement = union(enum) {
 
     pub fn format(self: Statement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (self) {
-            inline else => |inner| writer.print("{s};", .{inner}),
+            inline else => |inner| writer.print("{s}", .{inner}),
         };
     }
 };
@@ -140,7 +140,6 @@ pub const AssignmentStatement = struct {
     pub fn format(self: AssignmentStatement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return writer.print("{s} {s} {s};", .{ self.name, self.type, self.expression });
     }
-
 
     /// Returns true if the assignment is a simple assignment.
     pub fn isSimple(self: AssignmentStatement) bool {
@@ -228,9 +227,12 @@ pub const IfExpression = struct {
 
 /// A while expression is a loop expression.
 /// For example, `while (true) { doSomething(); }` is a while expression.
+/// While expressions can also contain a post-statement that is executed after the loop body is executed.
+/// For example, `while (true): (i += 1) { doSomething(); }` is a while expression with a post-statement.
 pub const WhileExpression = struct {
     condition: *Expression,
     body: BlockStatement,
+    post_stmt: ?*Statement,
 };
 
 /// Builtins are functions that are built into the language.
@@ -358,8 +360,8 @@ pub fn createIfStatement(condition_list: []const IfExpression.ConditionData, alt
     return .{ .expression = .{ .expression = .{ .if_expr = .{ .condition_list = condition_list, .alternative = alternative } }, .terminated = terminated } };
 }
 
-pub fn createWhileStatement(condition: *Expression, body: BlockStatement, terminated: bool) Statement {
-    return .{ .expression = .{ .expression = .{ .while_expr = .{ .condition = condition, .body = body } }, .terminated = terminated } };
+pub fn createWhileStatement(condition: *Expression, body: BlockStatement, post_stmt: ?*Statement, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .while_expr = .{ .condition = condition, .body = body, .post_stmt = post_stmt } }, .terminated = terminated } };
 }
 
 pub fn createCallStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {

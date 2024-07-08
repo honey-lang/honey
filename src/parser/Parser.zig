@@ -130,7 +130,7 @@ pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
 pub fn parse(self: *Self) ParserError!Program {
     var program = Program.init(self.allocator());
     while (self.cursor.canRead()) {
-        const statement = self.parseStatement() catch continue;
+        const statement = self.parseStatement(true) catch continue;
         if (statement) |stmt| {
             try program.add(stmt);
         }
@@ -143,7 +143,7 @@ pub fn parse(self: *Self) ParserError!Program {
 }
 
 /// Parses a single statement from the tokens.
-fn parseStatement(self: *Self) ParserError!?Statement {
+fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
     return switch (self.currentToken()) {
         .let, .@"const" => try self.parseVarDeclaration(),
         .@"fn" => try self.parseFunctionDeclaration(),
@@ -168,7 +168,7 @@ fn parseStatement(self: *Self) ParserError!?Statement {
             if (self.cursor.hasNext() and self.currentIs(.identifier)) {
                 const next = self.peekToken() catch unreachable;
                 if (next.isAssignment()) {
-                    break :blk try self.parseAssignmentStatement();
+                    break :blk try self.parseAssignmentStatement(needs_terminated);
                 }
             }
             break :blk try self.parseExpressionStatement();
@@ -196,7 +196,7 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
     } };
 }
 
-fn parseAssignmentStatement(self: *Self) ParserError!Statement {
+fn parseAssignmentStatement(self: *Self, needs_terminated: bool) ParserError!Statement {
     const identifier_token = self.currentToken();
     try self.expectCurrentAndAdvance(.identifier);
     const assignment_token_data = try self.readAndAdvance();
@@ -204,7 +204,9 @@ fn parseAssignmentStatement(self: *Self) ParserError!Statement {
         return error.UnexpectedToken;
     }
     const expression = try self.parseExpression(.lowest);
-    try self.expectCurrentAndAdvance(.semicolon);
+    if (needs_terminated) {
+        try self.expectCurrentAndAdvance(.semicolon);
+    }
     return .{ .assignment = .{ .name = identifier_token.identifier, .type = assignment_token_data.token, .expression = expression } };
 }
 
@@ -235,7 +237,7 @@ fn parseBlockStatement(self: *Self) ParserError!ast.BlockStatement {
     try self.expectCurrentAndAdvance(.left_brace);
     var statements = std.ArrayList(Statement).init(self.allocator());
     while (!self.currentIs(.right_brace) and self.cursor.canRead()) {
-        const statement = try self.parseStatement() orelse continue;
+        const statement = try self.parseStatement(true) orelse continue;
         statements.append(statement) catch return error.OutOfMemory;
     }
     try self.expectCurrentAndAdvance(.right_brace);
@@ -317,8 +319,17 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
     const parsed = try self.parseExpression(.lowest);
     const condition_ptr = try self.moveToHeap(parsed);
     try self.expectCurrentAndAdvance(.right_paren);
+    // encountered a post statement
+    // while (true) : (i += 1) {}
+    var post_stmt: ?Statement = null;
+    if (self.currentIs(.colon)) {
+        self.cursor.advance();
+        try self.expectCurrentAndAdvance(.left_paren);
+        post_stmt = try self.parseStatement(false);
+        try self.expectCurrentAndAdvance(.right_paren);
+    }
     const body = try self.parseBlockStatement();
-    return .{ .while_expr = .{ .condition = condition_ptr, .body = body } };
+    return .{ .while_expr = .{ .condition = condition_ptr, .body = body, .post_stmt = if (post_stmt != null) &(post_stmt.?) else null } };
 }
 
 /// Parses an expression by attempting to parse it as a prefix.
@@ -668,6 +679,7 @@ test "test parsing simple while expression" {
                 ast.BlockStatement{ .statements = &[_]ast.Statement{
                     ast.createCallStatement("doSomething", &.{}, true),
                 } },
+                null,
                 false,
             );
             const statements = try program.statements.toOwnedSlice();

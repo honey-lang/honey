@@ -1,7 +1,7 @@
 const ITERATIONS = 100_000;
 
 let i = 0;
-while(i < ITERATIONS) {
+while(i < ITERATIONS): (i += 1) {
     @println("Iterations: ", i);
-    i += 1;
+    // i += 1;
 }

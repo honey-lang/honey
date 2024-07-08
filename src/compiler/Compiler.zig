@@ -445,6 +445,11 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                 try self.compileStatement(statement);
             }
 
+            // if there's a post statement, compile it after the loop body
+            if (inner.post_stmt) |post_stmt| {
+                try self.compileStatement(post_stmt.*);
+            }
+
             const instr = try self.getLastInstruction();
             try self.addInstruction(.{ .loop = @intCast(instr.nextInstructionIndex() - loop_start_instr.index) });
             const jump_target = try self.getLastInstruction();

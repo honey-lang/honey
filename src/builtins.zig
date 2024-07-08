@@ -39,20 +39,31 @@ pub fn rand(_: *Vm, args: []const Value) !?Value {
 }
 
 pub fn print(_: *Vm, args: []const Value) !?Value {
-    const stderr = std.io.getStdErr().writer();
+    const stderr = std.io.getStdErr();
+    var buf = std.io.bufferedWriter(stderr.writer());
+    const writer = buf.writer();
     for (args) |arg| {
         switch (arg) {
-            .string => stderr.print("{s}", .{arg.string}) catch return error.PrintFailed,
-            inline else => stderr.print("{s}", .{arg}) catch return error.PrintFailed,
+            .string => writer.print("{s}", .{arg.string}) catch return error.PrintFailed,
+            inline else => writer.print("{s}", .{arg}) catch return error.PrintFailed,
         }
     }
+    buf.flush() catch return error.PrintFailed;
     return null;
 }
 
-pub fn println(vm: *Vm, args: []const Value) !?Value {
-    _ = try print(vm, args);
-    const stderr = std.io.getStdErr().writer();
-    stderr.writeAll("\n") catch return error.PrintFailed;
+pub fn println(_: *Vm, args: []const Value) !?Value {
+    const stderr = std.io.getStdErr();
+    var buf = std.io.bufferedWriter(stderr.writer());
+    const writer = buf.writer();
+    for (args) |arg| {
+        switch (arg) {
+            .string => writer.print("{s}", .{arg.string}) catch return error.PrintFailed,
+            inline else => writer.print("{s}", .{arg}) catch return error.PrintFailed,
+        }
+    }
+    writer.writeByte('\n') catch return error.PrintFailed;
+    buf.flush() catch return error.PrintFailed;
     return null;
 }
 

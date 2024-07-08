@@ -176,7 +176,7 @@ pub fn exit() !void {
 
 // Recursively loads all declarations for ZLS checking
 comptime {
-    // zlsAnalyze(honey);
+    zlsAnalyze(honey);
 }
 
 /// A small utility function to expose all declarations at runtime

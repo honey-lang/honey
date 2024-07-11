@@ -245,7 +245,12 @@ fn parseBlockStatement(self: *Self) ParserError!ast.BlockStatement {
 }
 
 fn parseIdentifier(self: *Self) ParserError!Expression {
-    return .{ .identifier = try self.expectPeekAndRead(.identifier) };
+    const current = try self.readAndAdvance();
+    if (current.token != .identifier) {
+        self.diagnostics.report("expected identifier but got: {}", .{current.token});
+        return error.UnexpectedToken;
+    }
+    return .{ .identifier = current.token.identifier };
 }
 
 /// Parses an expression as a statement.
@@ -328,8 +333,64 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
         post_stmt = try self.parseStatement(false);
         try self.expectCurrentAndAdvance(.right_paren);
     }
-    const body = try self.parseBlockStatement();
-    return .{ .while_expr = .{ .condition = condition_ptr, .body = body, .post_stmt = if (post_stmt != null) &(post_stmt.?) else null } };
+    const body = try self.parseStatement(false) orelse {
+        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
+        return error.UnexpectedToken;
+    };
+
+    return .{ .while_expr = .{
+        .condition = condition_ptr,
+        .body = try self.moveToHeap(body),
+        .post_stmt = if (post_stmt) |stmt| try self.moveToHeap(stmt) else null,
+    } };
+}
+
+fn parseForExpression(self: *Self) ParserError!Expression {
+    // for (0..10)
+    try self.expectCurrentAndAdvance(.left_paren);
+    const range = try self.parseRange();
+    try self.expectCurrentAndAdvance(.right_paren);
+
+    // |i|
+    try self.expectCurrentAndAdvance(.pipe);
+    const capture = try self.parseExpression(.lowest);
+    if (capture != .identifier) {
+        self.diagnostics.report("expected identifier but got: {s}", .{capture});
+        return error.UnexpectedToken;
+    }
+    const capture_ptr = try self.moveToHeap(capture);
+    try self.expectCurrentAndAdvance(.pipe);
+    // { ... }
+    const body = try self.parseStatement(false) orelse {
+        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
+        return error.UnexpectedToken;
+    };
+
+    return .{ .for_expr = .{
+        .expr = try self.moveToHeap(range),
+        .capture = capture_ptr.identifier,
+        .body = try self.moveToHeap(body),
+    } };
+}
+
+fn parseRange(self: *Self) ParserError!Expression {
+    const start = try self.parseExpression(.lowest);
+    const start_ptr = try self.moveToHeap(start);
+
+    const inclusive = switch (self.currentToken()) {
+        .inclusive_range => true,
+        .exclusive_range => false,
+        inline else => {
+            self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()});
+            return error.UnexpectedToken;
+        },
+    };
+    self.cursor.advance();
+
+    const end = try self.parseExpression(.lowest);
+    const end_ptr = try self.moveToHeap(end);
+
+    return .{ .range = .{ .start = start_ptr, .end = end_ptr, .inclusive = inclusive } };
 }
 
 /// Parses an expression by attempting to parse it as a prefix.
@@ -355,6 +416,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
             break :blk try self.parseIfExpression();
         },
         .@"while" => try self.parseWhileExpression(),
+        .@"for" => try self.parseForExpression(),
         .builtin => |name| try self.parseBuiltinExpression(name),
         .left_paren => blk: {
             const parsed = try self.parseExpression(.lowest);
@@ -494,6 +556,9 @@ fn parseAndExpect(input: []const u8, test_func: *const fn (*Program) anyerror!vo
     defer parser.deinit();
     var program = try parser.parse();
     defer program.deinit();
+
+    // std.debug.print("Statement: {s}\n", .{program.statements.items[0]});
+
     try test_func(&program);
 }
 
@@ -680,6 +745,30 @@ test "test parsing simple while expression" {
                     ast.createCallStatement("doSomething", &.{}, true),
                 } },
                 null,
+                false,
+            );
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing simple for expression" {
+    try parseAndExpect("for (0..10) |i| { doSomething(); }", struct {
+        pub fn func(program: *Program) anyerror!void {
+            var for_start = Expression{ .number = 0 };
+            var for_end = Expression{ .number = 10 };
+            var for_range = Expression{ .range = .{
+                .start = &for_start,
+                .end = &for_end,
+                .inclusive = false,
+            } };
+            const expected = ast.createForStatement(
+                &for_range,
+                "i",
+                ast.BlockStatement{ .statements = &[_]ast.Statement{
+                    ast.createCallStatement("doSomething", &.{}, true),
+                } },
                 false,
             );
             const statements = try program.statements.toOwnedSlice();

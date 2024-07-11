@@ -231,8 +231,25 @@ pub const IfExpression = struct {
 /// For example, `while (true): (i += 1) { doSomething(); }` is a while expression with a post-statement.
 pub const WhileExpression = struct {
     condition: *Expression,
-    body: BlockStatement,
+    body: *Statement,
     post_stmt: ?*Statement,
+};
+
+/// A range expression is an expression that represents a range of values.
+/// Exclusive: for(0..10) |i| {}
+/// Inclusive: for(0...10) |i| {}
+pub const RangeExpression = struct {
+    start: *Expression,
+    end: *Expression,
+    inclusive: bool,
+};
+
+/// A for expression is a loop expression that iterates over a range of values or a collection.
+/// For example, `for(0..10) |i| { doSomething(i); }` is a for expression.
+pub const ForExpression = struct {
+    expr: *Expression,
+    capture: []const u8,
+    body: *Statement,
 };
 
 /// Builtins are functions that are built into the language.
@@ -273,11 +290,15 @@ pub const Expression = union(enum) {
     prefix: PrefixExpression,
     /// A binary expression, such as `1 + 2`, `3 * 4`, or `5 / 6`.
     binary: BinaryExpression,
+    /// A range expression, such as `0..10` or `0...10`.
+    range: RangeExpression,
     /// An if expression, such as `if (true) { 1 } else { 2 }`.
     /// TODO: Rename back to @"if" when ZLS fixes the bug with @"" identifiers.
     if_expr: IfExpression,
     /// A while expression, such as `while (true) { doSomething(); }`.
     while_expr: WhileExpression,
+    /// A for expression, such as `for(0..10) |i| { doSomething(i); }`.
+    for_expr: ForExpression,
     /// A builtin expression, such as `@print("Hello, world!")`.
     builtin: BuiltinExpression,
     /// A function call expression, such as `foo(1, 2, 3)`.
@@ -296,6 +317,7 @@ pub const Expression = union(enum) {
             .null => writer.writeAll("null"),
             .prefix => |inner| writer.print("({s}{s})", .{ inner.operator, inner.rhs }),
             .binary => |inner| writer.print("({s} {s} {s})", .{ inner.lhs, inner.operator, inner.rhs }),
+            .range => |inner| writer.print("{s}..{s}{s}", .{ inner.start, if (inner.inclusive) "=" else "", inner.end }),
             .if_expr => |inner| {
                 try writer.writeAll("if (");
                 for (inner.condition_list, 0..) |condition, index| {
@@ -309,6 +331,7 @@ pub const Expression = union(enum) {
                 }
             },
             .while_expr => |inner| writer.print("while ({s}) {s}", .{ inner.condition, inner.body }),
+            .for_expr => |inner| writer.print("for ({s}) {s}", .{ inner.expr, inner.body }),
             .builtin => |inner| {
                 try writer.print("@{s}(", .{inner.name});
                 for (inner.arguments, 0..) |argument, index| {
@@ -360,8 +383,12 @@ pub fn createIfStatement(condition_list: []const IfExpression.ConditionData, alt
     return .{ .expression = .{ .expression = .{ .if_expr = .{ .condition_list = condition_list, .alternative = alternative } }, .terminated = terminated } };
 }
 
-pub fn createWhileStatement(condition: *Expression, body: BlockStatement, post_stmt: ?*Statement, terminated: bool) Statement {
+pub fn createWhileStatement(condition: *Expression, body: *Statement, post_stmt: ?*Statement, terminated: bool) Statement {
     return .{ .expression = .{ .expression = .{ .while_expr = .{ .condition = condition, .body = body, .post_stmt = post_stmt } }, .terminated = terminated } };
+}
+
+pub fn createForStatement(expr: *Expression, capture: []const u8, body: *Statement, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .for_expr = .{ .expr = expr, .capture = capture, .body = body } }, .terminated = terminated } };
 }
 
 pub fn createCallStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {

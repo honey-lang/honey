@@ -28,6 +28,20 @@ pub fn Stack(comptime T: type) type {
             return actual_index;
         }
 
+        pub fn dump(self: *Self) void {
+            std.debug.print("------------- Stack -------------\n", .{});
+            if (self.data.items.len == 0) {
+                std.debug.print("Empty\n", .{});
+            } else {
+                for (0..self.data.items.len) |index| {
+                    const resolved = self.resolveIndex(index) catch unreachable;
+                    const item = self.data.items[resolved];
+                    std.debug.print("#{d} - {s}\n", .{ index, item });
+                }
+            }
+            std.debug.print("---------------------------------\n", .{});
+        }
+
         /// Returns the top value of the stack or an error if the stack is empty.
         pub fn peek(self: *Self) Error!T {
             if (self.data.items.len == 0) {

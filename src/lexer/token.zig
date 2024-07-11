@@ -92,6 +92,14 @@ pub const TokenTag = enum {
     left_brace,
     /// .right_brace represents the character '}'
     right_brace,
+    /// .dot represents the character '.'
+    dot,
+    /// .exclusive_range represents the characters '..'
+    exclusive_range,
+    /// .inclusive_range represents the characters '..='
+    inclusive_range,
+    /// .pipe represents the character '|'
+    pipe,
     /// .invalid represents an invalid character
     invalid,
 };
@@ -142,6 +150,10 @@ pub const Token = union(TokenTag) {
     right_paren,
     left_brace,
     right_brace,
+    dot,
+    exclusive_range,
+    inclusive_range,
+    pipe,
     invalid: u8,
 
     pub fn format(self: Token, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

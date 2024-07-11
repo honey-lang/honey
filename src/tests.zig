@@ -6,5 +6,5 @@ pub const Compiler = @import("compiler/Compiler.zig");
 pub const Vm = @import("vm/Vm.zig");
 
 test {
-    std.testing.refAllDecls(@This());
+    std.testing.refAllDeclsRecursive(@This());
 }

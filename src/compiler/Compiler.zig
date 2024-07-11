@@ -381,12 +381,23 @@ fn addConstant(self: *Self, value: Value) Error!u16 {
 /// Attempts to add a local variable to the list of local variables and return its index
 fn addLocal(self: *Self, name: []const u8, is_const: bool) Error!u16 {
     defer self.used_local_variables += 1;
+
     self.local_variables[self.used_local_variables] = Local{
         .name = name,
         .depth = self.scope_depth,
         .is_const = is_const,
     };
     return self.used_local_variables;
+}
+
+/// Attempts to find a local variable by name. If found, it removes it from the list of local variables
+fn removeLocal(self: *Self, name: []const u8) Error!void {
+    for (self.getLocals()) |local| {
+        if (std.mem.eql(u8, local.name, name)) {
+            self.used_local_variables -= 1;
+            return;
+        }
+    }
 }
 
 /// Compiles an expression to opcodes
@@ -441,14 +452,14 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
             jif_target = try self.getLastInstruction();
 
-            for (inner.body.statements) |statement| {
-                try self.compileStatement(statement);
-            }
+            try self.compileStatement(inner.body.*);
 
             // if there's a post statement, compile it after the loop body
             if (inner.post_stmt) |post_stmt| {
                 try self.compileStatement(post_stmt.*);
             }
+
+            // try self.addInstruction(.pop);
 
             const instr = try self.getLastInstruction();
             try self.addInstruction(.{ .loop = @intCast(instr.nextInstructionIndex() - loop_start_instr.index) });
@@ -458,6 +469,47 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
             // todo: only add a void instr if the loop body is empty
             try self.addInstruction(.void);
+        },
+        .for_expr => |inner| {
+            var jif_target: CompiledInstruction = undefined;
+            // the loop should start before the condition
+
+            const range = inner.expr.range;
+
+            try self.compileExpression(range.start.*);
+            const capture_offset = try self.addLocal(inner.capture, false);
+
+            const loop_start_instr = try self.getLastInstruction();
+            try self.compileExpression(range.end.*);
+            try self.addInstruction(.{ .get_local = capture_offset });
+            try self.addInstruction(if (range.inclusive) .gt_eql else .gt);
+
+            try self.addInstruction(.{ .jump_if_false = MaxOffset });
+            jif_target = try self.getLastInstruction();
+
+            try self.compileStatement(inner.body.*);
+
+            // increment the capture variable
+            try self.addInstruction(.{ .get_local = capture_offset });
+            // todo: stepping?
+            const increment_const = try self.addConstant(.{ .number = 1 });
+            try self.addInstruction(.{ .@"const" = increment_const });
+            // todo: decrementing loops? e.g., 10..0
+            try self.addInstruction(.add);
+            try self.addInstruction(.{ .set_local = capture_offset });
+
+            const instr = try self.getLastInstruction();
+            try self.addInstruction(.{ .loop = @intCast(instr.nextInstructionIndex() - loop_start_instr.index) });
+
+            const jump_target = try self.getLastInstruction();
+
+            // remove local after loop is done
+            try self.removeLocal(inner.capture);
+            try self.addInstruction(.pop);
+            // todo: only add a void instr if the loop body is empty
+            try self.addInstruction(.void);
+
+            try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.index - jif_target.index) });
         },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
@@ -482,7 +534,10 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             for (inner.arguments) |arg| {
                 try self.compileExpression(arg);
             }
-            try self.addInstruction(.{ .call_builtin = .{ .constant_index = index, .arg_count = @as(u16, @intCast(inner.arguments.len)) } });
+            try self.addInstruction(.{ .call_builtin = .{
+                .constant_index = index,
+                .arg_count = @as(u16, @intCast(inner.arguments.len)),
+            } });
         },
         inline else => {
             self.diagnostics.report("Unsupported expression type: {s}", .{expression});

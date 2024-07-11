@@ -9,6 +9,7 @@
 | `pop`           | 0x20   | void     |
 | `jump`          | 0x30   | u16      |
 | `jump_if_false` | 0x40   | u16      |
+| `loop`          | 0x50   | u16      |
 | `true`          | 0x10   | void     |
 | `false`         | 0x11   | void     |
 | `null`          | 0x12   | void     |

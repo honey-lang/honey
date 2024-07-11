@@ -199,6 +199,8 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     //     try self.collectGarbage();
     // }
 
+    // self.stack.dump();
+
     switch (instruction) {
         .@"const" => {
             const constant = try self.fetchConstant();
@@ -283,10 +285,11 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .set_local => {
             const offset = try self.fetchNumber(u16);
-            const value = self.stack.peek() catch {
-                self.diagnostics.report("Stack is empty upon attempting to set local value at offset {d} ", .{offset});
+            const value = self.stack.pop() catch {
+                self.diagnostics.report("Local variable not found at offset {d}", .{offset});
                 return error.GenericError;
             };
+            // std.debug.print("- Setting local variable at offset {d}: {s}\n", .{ offset, value });
 
             self.stack.set(offset, value) catch |err| {
                 self.diagnostics.report("Failed to set local variable at offset {d}: {any}", .{ offset, err });
@@ -313,6 +316,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.diagnostics.report("Local variable not found at offset {d}", .{offset});
                 return error.GenericError;
             };
+            // std.debug.print("* Getting local variable at offset {d}: {s}\n", .{ offset, value });
 
             try self.pushOrError(value);
         },

@@ -326,8 +326,7 @@ fn runExpression(self: *Self, expression: Expression, options: RunOptions) anyer
         .while_expr => |inner| try self.runWhileExpression(inner, options),
         .builtin => |inner| try self.runBuiltinExpression(inner, options),
         .call => |inner| try self.runCallExpression(inner, options),
-        .fn_ref => unreachable,
-        .callback => unreachable,
+        inline else => std.debug.panic("invalid expression: {s}", .{@tagName(expression)}),
     };
 }
 
@@ -404,7 +403,7 @@ fn runWhileExpression(self: *Self, expression: ast.WhileExpression, options: Run
         if (!result.boolean) {
             break;
         }
-        _ = try self.runBlockStatement(expression.body, options);
+        _ = try self.runStatement(expression.body.*, options);
     }
     return Value.Void;
 }

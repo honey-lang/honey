@@ -76,15 +76,27 @@ inline fn skipWhitespace(self: *Self) void {
 }
 
 // Reads tokens from a map of characters to tokens or a fallback if no match was found
-const TokenCharMap = struct { u8, Token };
+const TokenStringEntry = struct { []const u8, Token };
 
 /// Attempts to read a token from a map of characters to tokens or a fallback if no match was found
-inline fn readCharMap(self: *Self, comptime map: []const TokenCharMap, fallback: Token) Token {
-    const next = self.cursor.peek() orelse return fallback;
-    inline for (map) |entry| {
+/// This function will advance the cursor by the length of the matched string if a match is found
+inline fn readStringMap(self: *Self, comptime map: []const TokenStringEntry, fallback: Token) Token {
+    // extremely ugly but we create a slice from the map and dereference it to get an array of entries to sort
+    comptime var sorted = map[0..].*;
+
+    // we sort the map by the length of the string in the entry
+    comptime std.mem.sort(TokenStringEntry, &sorted, {}, struct {
+        fn cmp(_: void, a: TokenStringEntry, b: TokenStringEntry) bool {
+            return a.@"0".len > b.@"0".len;
+        }
+    }.cmp);
+
+    inline for (sorted) |entry| {
         const key, const value = entry;
-        if (next == key) {
-            defer self.cursor.advance();
+        const peeked = self.cursor.peekSlice(key.len);
+        if (std.mem.eql(u8, key, peeked)) {
+            // we subtract by one as to not overscan the next character
+            defer self.cursor.advanceAmount(key.len - 1);
             return value;
         }
     }
@@ -108,24 +120,24 @@ fn readComment(self: *Self) ?TokenData {
 fn readChar(self: *Self) ?TokenData {
     const start = self.cursor.getCurrentPos();
     const data: Token = switch (self.cursor.current()) {
-        '+' => self.readCharMap(&.{.{ '=', .plus_assignment }}, .plus),
-        '-' => self.readCharMap(&.{.{ '=', .minus_assignment }}, .minus),
-        '*' => star: {
-            // todo: integrate this into the readCharMap function
-            if (std.mem.eql(u8, self.cursor.peekSlice(3), "**=")) {
-                defer self.cursor.advanceAmount(3);
-                break :star .doublestar_assignment;
-            } else {
-                break :star self.readCharMap(&.{ .{ '*', .doublestar }, .{ '=', .star_assignment } }, .star);
-            }
-        },
+        '+' => self.readStringMap(&.{.{ "+=", .plus_assignment }}, .plus),
+        '-' => self.readStringMap(&.{.{ "-=", .minus_assignment }}, .minus),
+        '*' => self.readStringMap(&.{
+            .{ "**=", .doublestar_assignment },
+            .{ "**", .doublestar },
+            .{ "*=", .star_assignment },
+        }, .star),
         // we do not need to worry about comments here because we parse them before we get to this point
-        '/' => self.readCharMap(&.{.{ '=', .slash_assignment }}, .slash),
-        '%' => self.readCharMap(&.{.{ '=', .modulo_assignment }}, .modulo),
-        '=' => self.readCharMap(&.{.{ '=', .equal }}, .assignment),
-        '!' => self.readCharMap(&.{.{ '=', .not_equal }}, .bang),
-        '>' => self.readCharMap(&.{.{ '=', .greater_than_equal }}, .greater_than),
-        '<' => self.readCharMap(&.{.{ '=', .less_than_equal }}, .less_than),
+        '/' => self.readStringMap(&.{.{ "/=", .slash_assignment }}, .slash),
+        '%' => self.readStringMap(&.{.{ "%=", .modulo_assignment }}, .modulo),
+        '=' => self.readStringMap(&.{.{ "==", .equal }}, .assignment),
+        '!' => self.readStringMap(&.{.{ "!=", .not_equal }}, .bang),
+        '>' => self.readStringMap(&.{.{ ">=", .greater_than_equal }}, .greater_than),
+        '<' => self.readStringMap(&.{.{ "<=", .less_than_equal }}, .less_than),
+        '.' => self.readStringMap(&.{
+            .{ "...", .inclusive_range },
+            .{ "..", .exclusive_range },
+        }, .dot),
         '(' => .left_paren,
         ')' => .right_paren,
         '{' => .left_brace,
@@ -133,6 +145,7 @@ fn readChar(self: *Self) ?TokenData {
         ',' => .comma,
         ';' => .semicolon,
         ':' => .colon,
+        '|' => .pipe,
         // if we don't have a match, we return null from the function
         else => return null,
     };
@@ -168,13 +181,18 @@ fn readString(self: *Self) TokenData {
 }
 
 /// Reads a number-like token from the current position
-fn readNumberlike(self: *Self) TokenData {
-    const data, const position = self.cursor.readWhile(struct {
-        fn check(char: u8) bool {
-            return std.ascii.isDigit(char) or char == '.' or char == '_';
+fn readNumberlike(self: *Self) ?TokenData {
+    const start = self.cursor.getCurrentPos();
+    while (self.cursor.canRead()) : (self.cursor.advance()) {
+        switch (self.cursor.current()) {
+            // if we encounter a dot, we need to check if it's a decimal point or a range operator
+            '.' => if (self.cursor.peek() == '.') break,
+            '0'...'9', '_' => {},
+            inline else => break,
         }
-    }.check);
-    return TokenData.create(.{ .number = data }, position.start, position.end);
+    }
+    const end = self.cursor.getCurrentPos();
+    return TokenData.create(.{ .number = self.cursor.input[start..end] }, start, end - 1);
 }
 
 /// Reads a builtin function from the current position
@@ -282,4 +300,21 @@ test "test assignment lexing" {
         TokenData.create(.modulo_assignment, 2, 3),
         TokenData.create(.{ .number = "1" }, 5, 5),
     });
+}
+
+test "ensure readStringMap sorts by length" {
+    const ally = std.testing.allocator;
+    const map = &[_]TokenStringEntry{
+        .{ "..", .exclusive_range },
+        .{ "..=", .inclusive_range },
+    };
+    var lexer_1 = Self.init("..=", ally);
+    defer lexer_1.deinit();
+    const token_1 = lexer_1.readStringMap(map, .dot);
+    try std.testing.expectEqual(token_1, .inclusive_range);
+
+    var lexer_2 = Self.init("..5", ally);
+    defer lexer_2.deinit();
+    const token_2 = lexer_2.readStringMap(map, .dot);
+    try std.testing.expectEqual(token_2, .exclusive_range);
 }

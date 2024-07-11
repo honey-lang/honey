@@ -1,7 +1,19 @@
-const ITERATIONS = 100_000;
+const ITERATIONS = 10;
 
-let i = 0;
-while(i < ITERATIONS): (i += 1) {
-    @println("Iterations: ", i);
-    // i += 1;
+// while loop form
+// {
+//     let i = 0;
+//     while(i <= ITERATIONS): (i += 1) {
+//         let j = 0;
+//         while(j <= ITERATIONS): (j += 1) {
+//             @println("i: ", i, ", j: ", j);
+//         }
+//     }
+// }
+
+// for loop form
+for (0...ITERATIONS) |x| {
+    for (0...ITERATIONS) |y| {
+        @println("x: ", x, ", y: ", y);
+    }
 }

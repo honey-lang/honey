@@ -5,7 +5,6 @@ pub const ast = @import("parser/ast.zig");
 pub const Parser = @import("parser/Parser.zig");
 pub const Compiler = @import("compiler/Compiler.zig");
 pub const Bytecode = @import("compiler/Bytecode.zig");
-pub const Evaluator = @import("evaluator/Evaluator.zig");
 pub const Vm = @import("vm/Vm.zig");
 
 pub const version = "0.0.1";
@@ -43,20 +42,8 @@ pub fn parse(input: []const u8, options: ParseOptions) !Result(ast.Program) {
 
 pub const RunOptions = struct {
     allocator: std.mem.Allocator,
-    environment: *Evaluator.Environment,
     error_writer: std.fs.File.Writer,
 };
-
-pub fn run(input: []const u8, options: RunOptions) !Result(?Evaluator.Value) {
-    var result = try parse(input, .{ .allocator = options.allocator, .error_writer = options.error_writer });
-    const allocator = result.arena.allocator();
-    var evaluator = Evaluator.init(allocator, options.environment);
-    defer evaluator.deinit();
-    return Result(?Evaluator.Value){
-        .data = try evaluator.run(result.data),
-        .arena = result.arena,
-    };
-}
 
 pub const CompileOptions = struct {
     allocator: std.mem.Allocator,

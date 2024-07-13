@@ -157,6 +157,21 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
             try self.expectCurrentAndAdvance(.semicolon);
             break :blk .{ .@"return" = .{ .expression = expression } };
         },
+        .@"break" => blk: {
+            self.cursor.advance();
+            if (self.currentIs(.semicolon)) {
+                try self.expectCurrentAndAdvance(.semicolon);
+            }
+            // todo: break values
+            break :blk .@"break";
+        },
+        .@"continue" => blk: {
+            self.cursor.advance();
+            if (self.currentIs(.semicolon)) {
+                try self.expectCurrentAndAdvance(.semicolon);
+            }
+            break :blk .@"continue";
+        },
         .left_brace => .{ .block = try self.parseBlockStatement() },
         // skip comments
         .comment => blk: {

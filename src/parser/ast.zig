@@ -101,9 +101,12 @@ pub const Statement = union(enum) {
     @"fn": FunctionDeclaration,
     block: BlockStatement,
     @"return": ReturnStatement,
+    @"break": void,
+    @"continue": void,
 
     pub fn format(self: Statement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (self) {
+            .@"break", .@"continue" => try writer.print("{s};", .{@tagName(self)}),
             inline else => |inner| writer.print("{s}", .{inner}),
         };
     }

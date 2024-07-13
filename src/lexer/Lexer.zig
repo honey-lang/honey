@@ -15,6 +15,8 @@ const KeywordMap = std.StaticStringMap(Token).initComptime(.{
     .{ "else", .@"else" },
     .{ "while", .@"while" },
     .{ "for", .@"for" },
+    .{ "break", .@"break" },
+    .{ "continue", .@"continue" },
     .{ "true", .true },
     .{ "false", .false },
     .{ "null", .null },

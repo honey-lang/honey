@@ -28,6 +28,10 @@ pub const TokenTag = enum {
     @"while",
     /// .for represents the keyword 'for'
     @"for",
+    /// .break represents the keyword 'break'
+    @"break",
+    /// .continue represents the keyword 'continue'
+    @"continue",
     /// .true represents the keyword 'true'
     true,
     /// .false represents the keyword 'false'
@@ -118,6 +122,8 @@ pub const Token = union(TokenTag) {
     @"else",
     @"while",
     @"for",
+    @"break",
+    @"continue",
     true,
     false,
     null,

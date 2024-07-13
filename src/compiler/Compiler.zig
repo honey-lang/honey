@@ -63,6 +63,136 @@ const Local = struct {
     is_const: bool,
 };
 
+const ScopeContext = struct {
+    /// The local variables being tracked by the compiler
+    local_variables: [MaxLocalVariables]Local = undefined,
+    /// How many local variables are currently being used in the current scope
+    used_local_variables: u8 = 0,
+    /// The depth of the current scope
+    current_depth: u16 = 0,
+    /// The current loop that the compiler is in
+    current_loop: ?ast.Expression = null,
+    /// The current break instructions being tracked for the current loop
+    break_statements: std.ArrayList(CompiledInstruction),
+    /// The current continue instructions being tracked for the current loop
+    continue_statements: std.ArrayList(CompiledInstruction),
+
+    /// Initializes the scope context
+    pub fn init(ally: std.mem.Allocator) ScopeContext {
+        return .{
+            .break_statements = std.ArrayList(CompiledInstruction).init(ally),
+            .continue_statements = std.ArrayList(CompiledInstruction).init(ally),
+        };
+    }
+
+    /// Deinitializes the scope context
+    pub fn deinit(self: *ScopeContext) void {
+        self.break_statements.deinit();
+        self.continue_statements.deinit();
+    }
+
+    /// Begins a new loop
+    pub fn beginLoop(self: *ScopeContext, loop: ast.Expression) void {
+        self.break_statements.clearRetainingCapacity();
+        self.continue_statements.clearRetainingCapacity();
+        self.current_loop = loop;
+    }
+
+    /// Adds a continue statement to the current loop
+    pub fn addBreak(self: *ScopeContext, instr: CompiledInstruction) !void {
+        try self.break_statements.append(instr);
+    }
+
+    /// Adds a continue statement to the current loop
+    pub fn addContinue(self: *ScopeContext, instr: CompiledInstruction) !void {
+        try self.continue_statements.append(instr);
+    }
+
+    /// Patches all break and continue statements with the correct offsets
+    pub fn patchLoop(self: *ScopeContext, compiler: *Self, post_loop_expr: CompiledInstruction, loop_end: CompiledInstruction) !void {
+        for (self.break_statements.items) |instr| {
+            try compiler.replace(instr, .{ .jump = @intCast(loop_end.nextInstructionIndex() - instr.index) });
+        }
+
+        for (self.continue_statements.items) |instr| {
+            try compiler.replace(instr, .{ .jump = @intCast(post_loop_expr.nextInstructionIndex() - instr.nextInstructionIndex()) });
+        }
+    }
+
+    /// Ends the current loop
+    pub fn endLoop(self: *ScopeContext) void {
+        self.break_statements.clearRetainingCapacity();
+        self.continue_statements.clearRetainingCapacity();
+        self.current_loop = null;
+    }
+
+    /// Returns the local variables in the current scope
+    inline fn getLocals(self: *ScopeContext) []Local {
+        return self.local_variables[0..self.used_local_variables];
+    }
+
+    /// Returns a local variable by offset or errors if the index is out of bounds
+    inline fn getLocal(self: *ScopeContext, offset: u16) Error!Local {
+        if (offset < 0 or offset >= self.used_local_variables) {
+            return Error.LocalOutOfBounds;
+        }
+        return self.local_variables[offset];
+    }
+
+    /// Returns the last local variable
+    /// This will panic or have UB if there are no local variables
+    inline fn getLastLocal(self: *ScopeContext) Local {
+        return self.getLocals()[self.used_local_variables - 1];
+    }
+
+    /// Returns true if there is a local variable with the given name
+    inline fn hasLocal(self: *ScopeContext, name: []const u8) bool {
+        return self.resolveLocalOffset(name) != null;
+    }
+
+    /// Finds a local variable by name and returns its offset
+    inline fn resolveLocalOffset(self: *ScopeContext, name: []const u8) ?u16 {
+        for (self.getLocals(), 0..) |local, offset| {
+            if (std.mem.eql(u8, local.name, name)) {
+                return @intCast(offset);
+            }
+        }
+        return null;
+    }
+
+    /// Finds a local variable by name and returns it
+    inline fn resolveLocal(self: *ScopeContext, name: []const u8) ?Local {
+        for (self.getLocals()) |local| {
+            if (std.mem.eql(u8, local.name, name)) {
+                return local;
+            }
+        }
+        return null;
+    }
+
+    /// Attempts to add a local variable to the list of local variables and return its index
+    fn addLocal(self: *ScopeContext, name: []const u8, is_const: bool) Error!u16 {
+        defer self.used_local_variables += 1;
+
+        self.local_variables[self.used_local_variables] = Local{
+            .name = name,
+            .depth = self.current_depth,
+            .is_const = is_const,
+        };
+        return self.used_local_variables;
+    }
+
+    /// Attempts to find a local variable by name. If found, it removes it from the list of local variables
+    fn removeLocal(self: *ScopeContext, name: []const u8) Error!void {
+        for (self.getLocals()) |local| {
+            if (std.mem.eql(u8, local.name, name)) {
+                self.used_local_variables -= 1;
+                return;
+            }
+        }
+    }
+};
+
 /// A simple arena allocator used when compiling into bytecode
 arena: std.heap.ArenaAllocator,
 /// The current program being compiled
@@ -79,12 +209,8 @@ declared_global_identifiers: GlobalIdentifierMap,
 last_compiled_instr: ?CompiledInstruction = null,
 /// The instruction before the last instruction
 penult_compiled_instr: ?CompiledInstruction = null,
-/// The local variables being tracked by the compiler
-local_variables: [MaxLocalVariables]Local = undefined,
-/// How many local variables are currently being used in the current scope
-used_local_variables: u8 = 0,
-/// The depth of the current scope
-scope_depth: u16 = 0,
+/// Context about the current scope
+scope_context: ScopeContext,
 
 /// Initializes the compiler
 pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
@@ -95,6 +221,7 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
         .instructions = std.ArrayList(u8).init(ally),
         .constants = std.ArrayList(Value).init(ally),
         .declared_global_identifiers = GlobalIdentifierMap.init(ally),
+        .scope_context = ScopeContext.init(ally),
     };
 }
 
@@ -105,6 +232,7 @@ pub fn deinit(self: *Self) void {
     self.instructions.deinit();
     self.constants.deinit();
     self.declared_global_identifiers.deinit();
+    self.scope_context.deinit();
 }
 
 /// Adds an operation to the bytecode
@@ -162,50 +290,6 @@ fn getPreviousInstruction(self: *Self) Error!CompiledInstruction {
     return self.penult_compiled_instr orelse Error.InvalidInstruction;
 }
 
-/// Returns the local variables in the current scope
-inline fn getLocals(self: *Self) []Local {
-    return self.local_variables[0..self.used_local_variables];
-}
-
-/// Returns a local variable by offset or errors if the index is out of bounds
-inline fn getLocal(self: *Self, offset: u16) Error!Local {
-    if (offset < 0 or offset >= self.used_local_variables) {
-        return Error.LocalOutOfBounds;
-    }
-    return self.local_variables[offset];
-}
-
-/// Returns the last local variable
-/// This will panic or have UB if there are no local variables
-inline fn getLastLocal(self: *Self) Local {
-    return self.getLocals()[self.used_local_variables - 1];
-}
-
-/// Returns true if there is a local variable with the given name
-inline fn hasLocal(self: *Self, name: []const u8) bool {
-    return self.resolveLocalOffset(name) != null;
-}
-
-/// Finds a local variable by name and returns its offset
-inline fn resolveLocalOffset(self: *Self, name: []const u8) ?u16 {
-    for (self.getLocals(), 0..) |local, offset| {
-        if (std.mem.eql(u8, local.name, name)) {
-            return @intCast(offset);
-        }
-    }
-    return null;
-}
-
-/// Finds a local variable by name and returns it
-inline fn resolveLocal(self: *Self, name: []const u8) ?Local {
-    for (self.getLocals()) |local| {
-        if (std.mem.eql(u8, local.name, name)) {
-            return local;
-        }
-    }
-    return null;
-}
-
 /// Returns true if there is a global variable/constant declared with the given name
 fn hasGlobal(self: *Self, name: []const u8) bool {
     return self.declared_global_identifiers.contains(name);
@@ -235,7 +319,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         },
         .variable => |inner| {
             // declare a global variable if we're at the top level
-            if (self.scope_depth <= 0) {
+            if (self.scope_context.current_depth <= 0) {
                 if (self.hasGlobal(inner.name)) {
                     self.diagnostics.report("Identifier \"{s}\" already exists in the current scope", .{inner.name});
                     return Error.VariableAlreadyExists;
@@ -251,20 +335,20 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
 
             // declare a local variable
             // if the variable name already exists in the current scope, throw an error
-            for (self.getLocals()) |local| {
-                if (local.depth <= self.scope_depth and std.mem.eql(u8, local.name, inner.name)) {
+            for (self.scope_context.getLocals()) |local| {
+                if (local.depth <= self.scope_context.current_depth and std.mem.eql(u8, local.name, inner.name)) {
                     self.diagnostics.report("Variable {s} already exists in the current scope", .{inner.name});
                     return Error.VariableAlreadyExists;
                 }
             }
 
-            _ = try self.addLocal(inner.name, inner.type == .@"const");
+            _ = try self.scope_context.addLocal(inner.name, inner.type == .@"const");
             try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {
-            if (self.resolveLocalOffset(inner.name)) |offset| {
+            if (self.scope_context.resolveLocalOffset(inner.name)) |offset| {
                 // fetch local
-                const local = self.getLocal(offset) catch |err| {
+                const local = self.scope_context.getLocal(offset) catch |err| {
                     self.diagnostics.report("Local variable out of bounds: {s}", .{inner.name});
                     return err;
                 };
@@ -304,17 +388,35 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         .block => |inner| {
             // compile the block's statements & handle the scope depth
             {
-                self.scope_depth += 1;
-                defer self.scope_depth -= 1;
+                self.scope_context.current_depth += 1;
+                defer self.scope_context.current_depth -= 1;
                 for (inner.statements) |stmt| {
                     try self.compileStatement(stmt);
                 }
             }
 
             // pop after the block is done
-            while (self.used_local_variables > 0 and self.getLastLocal().depth > self.scope_depth) {
+            while (self.scope_context.used_local_variables > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
                 try self.addInstruction(.pop);
-                self.used_local_variables -= 1;
+                self.scope_context.used_local_variables -= 1;
+            }
+        },
+        .@"break" => {
+            if (self.scope_context.current_loop) |_| {
+                try self.addInstruction(.{ .jump = MaxOffset });
+                try self.scope_context.addBreak(try self.getLastInstruction());
+            } else {
+                self.diagnostics.report("break statement outside of loop", .{});
+                return Error.UnsupportedStatement;
+            }
+        },
+        .@"continue" => {
+            if (self.scope_context.current_loop) |_| {
+                try self.addInstruction(.{ .jump = MaxOffset });
+                try self.scope_context.addContinue(try self.getLastInstruction());
+            } else {
+                self.diagnostics.report("continue statement outside of loop", .{});
+                return Error.UnsupportedStatement;
             }
         },
         inline else => return Error.UnsupportedStatement,
@@ -374,30 +476,14 @@ inline fn resolveInfixToInstr(self: *Self, operator: ast.Operator) Error!opcodes
 
 /// Attempts to add a constant to the list of constants and return its index
 fn addConstant(self: *Self, value: Value) Error!u16 {
-    self.constants.append(value) catch return Error.OutOfMemory;
-    return @intCast(self.constants.items.len - 1);
-}
-
-/// Attempts to add a local variable to the list of local variables and return its index
-fn addLocal(self: *Self, name: []const u8, is_const: bool) Error!u16 {
-    defer self.used_local_variables += 1;
-
-    self.local_variables[self.used_local_variables] = Local{
-        .name = name,
-        .depth = self.scope_depth,
-        .is_const = is_const,
-    };
-    return self.used_local_variables;
-}
-
-/// Attempts to find a local variable by name. If found, it removes it from the list of local variables
-fn removeLocal(self: *Self, name: []const u8) Error!void {
-    for (self.getLocals()) |local| {
-        if (std.mem.eql(u8, local.name, name)) {
-            self.used_local_variables -= 1;
-            return;
+    // if it already exists, return the index
+    for (self.constants.items, 0..) |current, index| {
+        if (current.equal(value)) {
+            return @intCast(index);
         }
     }
+    self.constants.append(value) catch return Error.OutOfMemory;
+    return @intCast(self.constants.items.len - 1);
 }
 
 /// Compiles an expression to opcodes
@@ -447,6 +533,9 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             // the loop should start before the condition
             const loop_start_instr = try self.getLastInstruction();
 
+            self.scope_context.beginLoop(expression);
+            defer self.scope_context.endLoop();
+
             try self.compileExpression(inner.condition.*);
 
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
@@ -454,18 +543,23 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
             try self.compileStatement(inner.body.*);
 
+            const post_loop_expr = try self.getLastInstruction();
+
             // if there's a post statement, compile it after the loop body
             if (inner.post_stmt) |post_stmt| {
                 try self.compileStatement(post_stmt.*);
             }
 
-            // try self.addInstruction(.pop);
+            const last_loop_instr = try self.getLastInstruction();
 
-            const instr = try self.getLastInstruction();
-            try self.addInstruction(.{ .loop = @intCast(instr.nextInstructionIndex() - loop_start_instr.index) });
-            const jump_target = try self.getLastInstruction();
+            const loop_start_offset: u16 = @intCast(last_loop_instr.nextInstructionIndex() - loop_start_instr.index);
+            try self.addInstruction(.{ .loop = @intCast(loop_start_offset) });
+            const end_loop_instr = try self.getLastInstruction();
 
-            try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.index - jif_target.index) });
+            const end_loop_offset: u16 = @intCast(end_loop_instr.index - jif_target.index);
+
+            try self.replace(jif_target, .{ .jump_if_false = end_loop_offset });
+            try self.scope_context.patchLoop(self, post_loop_expr, end_loop_instr);
 
             // todo: only add a void instr if the loop body is empty
             try self.addInstruction(.void);
@@ -477,9 +571,13 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             const range = inner.expr.range;
 
             try self.compileExpression(range.start.*);
-            const capture_offset = try self.addLocal(inner.capture, false);
+            const capture_offset = try self.scope_context.addLocal(inner.capture, false);
+
+            self.scope_context.beginLoop(expression);
+            defer self.scope_context.endLoop();
 
             const loop_start_instr = try self.getLastInstruction();
+
             try self.compileExpression(range.end.*);
             try self.addInstruction(.{ .get_local = capture_offset });
             try self.addInstruction(if (range.inclusive) .gt_eql else .gt);
@@ -488,6 +586,8 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             jif_target = try self.getLastInstruction();
 
             try self.compileStatement(inner.body.*);
+
+            const post_loop_expr = try self.getLastInstruction();
 
             // increment the capture variable
             try self.addInstruction(.{ .get_local = capture_offset });
@@ -498,18 +598,20 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.addInstruction(.add);
             try self.addInstruction(.{ .set_local = capture_offset });
 
-            const instr = try self.getLastInstruction();
-            try self.addInstruction(.{ .loop = @intCast(instr.nextInstructionIndex() - loop_start_instr.index) });
+            const step_instr = try self.getLastInstruction();
 
-            const jump_target = try self.getLastInstruction();
+            try self.addInstruction(.{ .loop = @intCast(step_instr.nextInstructionIndex() - loop_start_instr.index) });
+
+            const loop_end_instr = try self.getLastInstruction();
 
             // remove local after loop is done
-            try self.removeLocal(inner.capture);
+            try self.scope_context.removeLocal(inner.capture);
             try self.addInstruction(.pop);
             // todo: only add a void instr if the loop body is empty
             try self.addInstruction(.void);
 
-            try self.replace(jif_target, .{ .jump_if_false = @intCast(jump_target.index - jif_target.index) });
+            try self.scope_context.patchLoop(self, post_loop_expr, loop_end_instr);
+            try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_end_instr.index - jif_target.index) });
         },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
@@ -522,7 +624,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
         .null => try self.addInstruction(.null),
         .identifier => |value| {
-            if (self.resolveLocalOffset(value)) |offset| {
+            if (self.scope_context.resolveLocalOffset(value)) |offset| {
                 try self.addInstruction(.{ .get_local = offset });
             } else {
                 const index = try self.addConstant(.{ .identifier = value });

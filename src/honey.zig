@@ -16,14 +16,25 @@ pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) ![]const TokenD
     return try lexer.tokens.toOwnedSlice();
 }
 
+/// The source of the input to be parsed.
+pub const Source = union(enum) {
+    file: std.fs.File,
+    string: []const u8,
+};
+
 pub const ParseOptions = struct {
     allocator: std.mem.Allocator,
     error_writer: std.fs.File.Writer,
 };
 
-pub fn parse(input: []const u8, options: ParseOptions) !Result(ast.Program) {
+pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
     var arena = std.heap.ArenaAllocator.init(options.allocator);
     errdefer arena.deinit();
+
+    const input: []const u8 = switch (source) {
+        .string => |string| string,
+        .file => |file| try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize)),
+    };
     const tokens = try tokenize(input, arena.allocator());
 
     var parser = Parser.init(tokens, .{ .ally = arena.allocator() });
@@ -50,8 +61,8 @@ pub const CompileOptions = struct {
     error_writer: std.fs.File.Writer,
 };
 
-pub fn compile(input: []const u8, options: CompileOptions) !Result(Bytecode) {
-    const result = try parse(input, .{
+pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
+    const result = try parse(source, .{
         .allocator = options.allocator,
         .error_writer = options.error_writer,
     });
@@ -75,8 +86,8 @@ pub const VmRunOptions = struct {
     dump_bytecode: bool = false,
 };
 
-pub fn runInVm(input: []const u8, options: VmRunOptions) !Result(Vm) {
-    const result = try compile(input, .{
+pub fn runInVm(source: Source, options: VmRunOptions) !Result(Vm) {
+    const result = try compile(source, .{
         .allocator = options.allocator,
         .error_writer = options.error_writer,
     });

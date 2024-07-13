@@ -51,11 +51,6 @@ pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
     };
 }
 
-pub const RunOptions = struct {
-    allocator: std.mem.Allocator,
-    error_writer: std.fs.File.Writer,
-};
-
 pub const CompileOptions = struct {
     allocator: std.mem.Allocator,
     error_writer: std.fs.File.Writer,
@@ -80,13 +75,13 @@ pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
     };
 }
 
-pub const VmRunOptions = struct {
+pub const RunOptions = struct {
     allocator: std.mem.Allocator,
     error_writer: std.fs.File.Writer,
     dump_bytecode: bool = false,
 };
 
-pub fn runInVm(source: Source, options: VmRunOptions) !Result(Vm) {
+pub fn run(source: Source, options: RunOptions) !Result(Vm) {
     const result = try compile(source, .{
         .allocator = options.allocator,
         .error_writer = options.error_writer,

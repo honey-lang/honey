@@ -78,7 +78,7 @@ pub fn main() !void {
     // close the file if we opened it
     defer if (input == .file) input.file.close();
 
-    const result = try honey.runInVm(input, .{
+    const result = try honey.run(input, .{
         .allocator = allocator,
         .error_writer = std.io.getStdErr().writer(),
         .dump_bytecode = res.args.@"dump-bytecode" == 1,
@@ -102,7 +102,7 @@ fn runRepl(allocator: std.mem.Allocator) !void {
     while (true) {
         const input = try repl.prompt("repl > ") orelse continue;
         // runInVm will print the error for us
-        var result = honey.runInVm(.{ .string = input }, .{
+        var result = honey.run(.{ .string = input }, .{
             .allocator = allocator,
             .error_writer = std.io.getStdOut().writer(),
         }) catch continue;

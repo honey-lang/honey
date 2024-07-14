@@ -4,7 +4,7 @@ pub const honey = @import("honey.zig");
 const Repl = @import("utils/Repl.zig");
 const ast = @import("parser/ast.zig");
 const Parser = @import("parser/Parser.zig");
-pub const utils = @import("./utils/utils.zig");
+pub const utils = @import("utils/utils.zig");
 
 const Header =
     \\

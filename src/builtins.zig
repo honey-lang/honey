@@ -4,7 +4,7 @@ const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
 // const Evaluator = @import("evaluator/Evaluator.zig");
 const Value = @import("compiler/value.zig").Value;
-const Vm = @import("./vm/Vm.zig");
+const Vm = @import("vm/Vm.zig");
 
 pub fn rand(_: *Vm, args: []const Value) !?Value {
     var prng = std.rand.DefaultPrng.init(blk: {

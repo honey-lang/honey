@@ -64,21 +64,21 @@ pub fn main() !void {
         try runRepl(allocator);
         return;
     }
-    const input = blk: {
+    const input: honey.Source = blk: {
         if (res.args.input) |input| {
-            break :blk input;
+            break :blk .{ .string = input };
         } else if (res.positionals.len > 0) {
-            var file = try std.fs.cwd().openFile(res.positionals[0], .{});
-            defer file.close();
-            break :blk try file.reader().readAllAlloc(allocator, std.math.maxInt(usize));
+            break :blk .{ .file = try std.fs.cwd().openFile(res.positionals[0], .{}) };
         } else {
             // show help & exit
             try stdout.print(Header ++ Options, .{honey.version});
             return;
         }
     };
+    // close the file if we opened it
+    defer if (input == .file) input.file.close();
 
-    const result = try honey.runInVm(input, .{
+    const result = try honey.run(input, .{
         .allocator = allocator,
         .error_writer = std.io.getStdErr().writer(),
         .dump_bytecode = res.args.@"dump-bytecode" == 1,
@@ -102,7 +102,7 @@ fn runRepl(allocator: std.mem.Allocator) !void {
     while (true) {
         const input = try repl.prompt("repl > ") orelse continue;
         // runInVm will print the error for us
-        var result = honey.runInVm(input, .{
+        var result = honey.run(.{ .string = input }, .{
             .allocator = allocator,
             .error_writer = std.io.getStdOut().writer(),
         }) catch continue;

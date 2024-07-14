@@ -56,7 +56,7 @@ pub fn build(b: *std.Build) void {
     });
     exe_check.root_module.addImport("clap", clap.module("clap"));
 
-    const check = b.step("check", "Check if foo compiles");
+    const check = b.step("check", "Check if the executable compiles");
     check.dependOn(&exe_check.step);
 
     // Step for running unit tests

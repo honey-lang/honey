@@ -64,10 +64,10 @@ const Local = struct {
 };
 
 const ScopeContext = struct {
+    const LocalArray = std.BoundedArray(Local, MaxLocalVariables);
+
     /// The local variables being tracked by the compiler
-    local_variables: [MaxLocalVariables]Local = undefined,
-    /// How many local variables are currently being used in the current scope
-    used_local_variables: u8 = 0,
+    local_variables: LocalArray = .{},
     /// The depth of the current scope
     current_depth: u16 = 0,
     /// The current loop that the compiler is in
@@ -128,21 +128,28 @@ const ScopeContext = struct {
 
     /// Returns the local variables in the current scope
     inline fn getLocals(self: *ScopeContext) []Local {
-        return self.local_variables[0..self.used_local_variables];
+        return self.local_variables.slice();
+    }
+
+    /// Returns the number of local variables in the current scope
+    inline fn getLocalsCount(self: *ScopeContext) usize {
+        return self.local_variables.len;
+    }
+
+    /// Returns the last local variable in the current scope or null if there are no local variables
+    inline fn popLocal(self: *ScopeContext) ?Local {
+        return self.local_variables.popOrNull();
     }
 
     /// Returns a local variable by offset or errors if the index is out of bounds
     inline fn getLocal(self: *ScopeContext, offset: u16) Error!Local {
-        if (offset < 0 or offset >= self.used_local_variables) {
-            return Error.LocalOutOfBounds;
-        }
-        return self.local_variables[offset];
+        return self.local_variables.get(@intCast(offset));
     }
 
     /// Returns the last local variable
     /// This will panic or have UB if there are no local variables
     inline fn getLastLocal(self: *ScopeContext) Local {
-        return self.getLocals()[self.used_local_variables - 1];
+        return self.local_variables.get(self.local_variables.len - 1);
     }
 
     /// Returns true if there is a local variable with the given name
@@ -172,21 +179,19 @@ const ScopeContext = struct {
 
     /// Attempts to add a local variable to the list of local variables and return its index
     fn addLocal(self: *ScopeContext, name: []const u8, is_const: bool) Error!u16 {
-        defer self.used_local_variables += 1;
-
-        self.local_variables[self.used_local_variables] = Local{
+        self.local_variables.append(Local{
             .name = name,
             .depth = self.current_depth,
             .is_const = is_const,
-        };
-        return self.used_local_variables;
+        }) catch return Error.OutOfMemory;
+        return self.local_variables.len - 1;
     }
 
     /// Attempts to find a local variable by name. If found, it removes it from the list of local variables
     fn removeLocal(self: *ScopeContext, name: []const u8) Error!void {
         for (self.getLocals()) |local| {
             if (std.mem.eql(u8, local.name, name)) {
-                self.used_local_variables -= 1;
+                _ = self.local_variables.popOrNull() orelse return Error.LocalOutOfBounds;
                 return;
             }
         }
@@ -396,9 +401,9 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             }
 
             // pop after the block is done
-            while (self.scope_context.used_local_variables > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
+            while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
                 try self.addInstruction(.pop);
-                self.scope_context.used_local_variables -= 1;
+                _ = self.scope_context.popLocal();
             }
         },
         .@"break" => {
@@ -525,8 +530,12 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             }
             const post_expr = try self.getLastInstruction();
 
-            try self.replace(jump_instr, .{ .jump = @intCast(post_expr.nextInstructionIndex() - jump_instr.nextInstructionIndex()) });
-            try self.replace(jif_instr, .{ .jump_if_false = @intCast(jump_instr.index - jif_instr.index) });
+            try self.replace(jump_instr, .{
+                .jump = @intCast(post_expr.nextInstructionIndex() - jump_instr.nextInstructionIndex()),
+            });
+            try self.replace(jif_instr, .{
+                .jump_if_false = @intCast(jump_instr.index - jif_instr.index),
+            });
         },
         .while_expr => |inner| {
             var jif_target: CompiledInstruction = undefined;

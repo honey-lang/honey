@@ -21,7 +21,6 @@ const Header =
 
 const Options =
     \\  -h, --help                Display this help menu and exit.
-    \\  -o, --output <output>       The output file for the compiled bytecode. Defaults to the input file name with the .honc extension.
     \\  -r, --repl                Start the REPL.
     \\  -d, --dump-bytecode       Dumps the bytecode before running (only used for the bytecode engine)
     \\  -p, --print-popped        Prints the last popped value after the program runs
@@ -33,7 +32,6 @@ const Options =
 const ClapParsers = .{
     .input = clap.parsers.string,
     .file = clap.parsers.string,
-    .output = clap.parsers.string,
 };
 
 pub fn main() !void {

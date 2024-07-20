@@ -77,7 +77,7 @@ pub fn os(vm: *Vm, args: []const Value) !?Value {
 }
 
 /// The maximum size of a prompt message.
-const MaxPromptSize = 1024;
+const MaxBufferSize = 1024;
 /// Prints a given message and then prompts the user for input using stdin.
 pub fn prompt(vm: *Vm, args: []const Value) !?Value {
     const stderr = std.io.getStdErr().writer();
@@ -89,12 +89,12 @@ pub fn prompt(vm: *Vm, args: []const Value) !?Value {
     stderr.print("{s}", .{msg}) catch return error.PrintFailed;
 
     // create a prompt buffer & a related stream
-    var prompt_buf: [MaxPromptSize]u8 = undefined;
+    var prompt_buf: [MaxBufferSize]u8 = undefined;
     var stream = std.io.fixedBufferStream(&prompt_buf);
 
     // stream the prompt message to stdin
     const stdin = std.io.getStdIn().reader();
-    stdin.streamUntilDelimiter(stream.writer(), '\n', MaxPromptSize) catch |err| switch (err) {
+    stdin.streamUntilDelimiter(stream.writer(), '\n', MaxBufferSize) catch |err| switch (err) {
         error.StreamTooLong => return error.PromptTooLong,
         else => return error.PromptFailed,
     };
@@ -114,6 +114,20 @@ pub fn parse_number(_: *Vm, args: []const Value) !?Value {
     const str = args[0].string;
     const number = std.fmt.parseFloat(f64, str) catch return error.ParseFailed;
     return .{ .number = number };
+}
+
+pub fn to_string(vm: *Vm, args: []const Value) !?Value {
+    if (args.len != 1) {
+        return error.InvalidNumberOfArguments;
+    }
+
+    // create small buffer to write to
+    var buf: [MaxBufferSize]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+    const writer = stream.writer();
+    writer.print("{s}", .{args[0]}) catch return error.PrintFailed;
+    // alloc a new string in the arena and return it
+    return try vm.createString(stream.getWritten());
 }
 
 pub fn memory(vm: *Vm, args: []const Value) !?Value {

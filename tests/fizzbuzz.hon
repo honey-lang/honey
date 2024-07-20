@@ -1,6 +1,13 @@
 
+const MIN = @parse_number(@prompt("Enter the minimum number: "));
+const MAX = @parse_number(@prompt("Enter the maximum number: "));
 
-for (1...21) |x| {
+if (MIN > MAX) {
+    @println("The minimum number must be less than the maximum number.");
+    return;
+}
+
+for (MIN...MAX) |x| {
     if (x % 3 == 0 and x % 5 == 0) {
         @println("FizzBuzz");
     } else if (x % 3 == 0) {

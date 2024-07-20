@@ -106,6 +106,16 @@ pub fn prompt(vm: *Vm, args: []const Value) !?Value {
     return try vm.createString(trimmed);
 }
 
+pub fn parse_number(_: *Vm, args: []const Value) !?Value {
+    if (args.len != 1 or args[0] != .string) {
+        return error.InvalidNumberOfArguments;
+    }
+
+    const str = args[0].string;
+    const number = std.fmt.parseFloat(f64, str) catch return error.ParseFailed;
+    return .{ .number = number };
+}
+
 pub fn memory(vm: *Vm, args: []const Value) !?Value {
     if (args.len != 0) {
         return error.InvalidNumberOfArguments;

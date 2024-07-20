@@ -1,4 +1,3 @@
-
 const MIN = @parse_number(@prompt("Enter the minimum number: "));
 const MAX = @parse_number(@prompt("Enter the maximum number: "));
 

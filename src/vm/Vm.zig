@@ -10,10 +10,6 @@ const Value = @import("../compiler/value.zig").Value;
 
 const Self = @This();
 
-/// The type that numbers are represented as in the VM
-const NumberType = f64;
-/// The size of a number in bytes
-const NumberSize = @sizeOf(NumberType) / @sizeOf(u8);
 const HexFormat = "0x{x:0<2}";
 
 /// The potential errors that can occur during execution
@@ -52,7 +48,7 @@ ally: std.mem.Allocator,
 /// The bytecode object for the VM
 bytecode: Bytecode,
 /// The objects allocated in the arena for the VM (used for GC)
-objects: ObjectList,
+objects: ObjectList = .{},
 /// The global constants in the VM
 global_constants: VariableMap,
 /// The global variables in the VM
@@ -85,7 +81,6 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
     var self = Self{
         .ally = ally,
         .bytecode = bytecode,
-        .objects = .{},
         .global_constants = VariableMap.init(ally),
         .global_variables = VariableMap.init(ally),
         .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
@@ -156,9 +151,21 @@ pub fn createString(self: *Self, value: []const u8) !Value {
     return created.*;
 }
 
+/// Adds all public functions from the import as a built-in library
+/// All built-ins are represented as a top-level call (e.g., `pub fn print` turns into `@print`)
 pub fn addBuiltinLibrary(self: *Self, comptime import: type) void {
     const decls = @typeInfo(import).Struct.decls;
     inline for (decls) |decl| {
+        const DeclType = @TypeOf(@field(import, decl.name));
+        const decl_type_info = @typeInfo(DeclType);
+        // validate that the declaration is a function
+        // todo: we can use this for mapping native functions to a call in the VM
+        // to do so, we'll inspect the params of the function and generate a new function that takes a slice of values,
+        // maps them to the correct types, and then calls the native function
+        // e.g., pub fn print(data: []const u8) will turn into a function with the parameters (vm: *Vm, args: []const Value)
+        if (decl_type_info != .Fn) {
+            continue;
+        }
         self.builtins.put(decl.name, @field(import, decl.name)) catch unreachable;
     }
 }
@@ -520,7 +527,7 @@ fn executeArithmetic(self: *Self, opcode: Opcode) VmError!void {
         .mul => lhs.number * rhs.number,
         .div => lhs.number / rhs.number,
         .mod => @mod(lhs.number, rhs.number),
-        .pow => std.math.pow(NumberType, lhs.number, rhs.number),
+        .pow => std.math.pow(@TypeOf(lhs.number), lhs.number, rhs.number),
         inline else => unreachable,
     } });
 }

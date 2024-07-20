@@ -406,6 +406,11 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 _ = self.scope_context.popLocal();
             }
         },
+        .@"return" => |inner| {
+            // todo: handle return values
+            _ = inner;
+            try self.addInstruction(.@"return");
+        },
         .@"break" => {
             if (self.scope_context.current_loop) |_| {
                 try self.addInstruction(.{ .jump = MaxOffset });

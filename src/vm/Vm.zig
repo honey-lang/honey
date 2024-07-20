@@ -51,10 +51,6 @@ const BuiltinFn = *const fn (*Self, []const Value) anyerror!?Value;
 ally: std.mem.Allocator,
 /// The bytecode object for the VM
 bytecode: Bytecode,
-/// The instructions to run in the VM
-instructions: []const u8,
-/// The constants to use in the VM
-constants: []const Value,
 /// The objects allocated in the arena for the VM (used for GC)
 objects: ObjectList,
 /// The global constants in the VM
@@ -89,8 +85,6 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
     var self = Self{
         .ally = ally,
         .bytecode = bytecode,
-        .instructions = bytecode.instructions,
-        .constants = bytecode.constants,
         .objects = .{},
         .global_constants = VariableMap.init(ally),
         .global_variables = VariableMap.init(ally),
@@ -182,7 +176,7 @@ pub fn run(self: *Self) VmError!void {
         self.bytecode.dump(writer) catch unreachable;
         writer.writeAll("----------------------------------\n") catch unreachable;
     }
-    while (self.program_counter < self.instructions.len) {
+    while (self.running and self.program_counter < self.bytecode.instructions.len) {
         const instruction = try self.fetchInstruction();
         try self.execute(instruction);
     }
@@ -202,6 +196,11 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     // self.stack.dump();
 
     switch (instruction) {
+        .@"return" => {
+            // todo: handle return values from functions
+            self.running = false;
+            return;
+        },
         .@"const" => {
             const constant = try self.fetchConstant();
             try self.pushOrError(constant);
@@ -347,14 +346,14 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             };
             try self.pushOrError(if (output) |value| value else Value.Void);
         },
-        inline else => {
-            self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
-                instruction.byte(),
-                self.program_counter,
-                @tagName(instruction),
-            });
-            return error.UnhandledInstruction;
-        },
+        // inline else => {
+        //     self.diagnostics.report("Unhandled instruction encountered (" ++ HexFormat ++ ") at PC {d}: {s}", .{
+        //         instruction.byte(),
+        //         self.program_counter,
+        //         @tagName(instruction),
+        //     });
+        //     return error.UnhandledInstruction;
+        // },
     }
 }
 
@@ -363,25 +362,22 @@ pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
-    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
     for (self.diagnostics.errors.items, 0..) |msg, index| {
         error_writer.print(" - {s}", .{msg}) catch unreachable;
         if (index < self.diagnostics.errors.items.len) {
             error_writer.print("\n", .{}) catch unreachable;
         }
     }
-    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
 }
 
 /// Fetches the next byte from the program
 fn fetchAndIncrement(self: *Self) VmError!u8 {
-    if (self.program_counter >= self.instructions.len) {
-        self.diagnostics.report("Program counter ({d}) exceeded bounds of program ({d}).", .{ self.program_counter, self.instructions.len });
+    if (self.program_counter >= self.bytecode.instructions.len) {
+        self.diagnostics.report("Program counter ({d}) exceeded bounds of program ({d}).", .{ self.program_counter, self.bytecode.instructions.len });
         return error.OutOfProgramBounds;
     }
     defer self.program_counter += 1;
-    return self.instructions[self.program_counter];
+    return self.bytecode.instructions[self.program_counter];
 }
 
 /// Fetches the next instruction from the program
@@ -396,12 +392,12 @@ fn fetchInstruction(self: *Self) VmError!Opcode {
 /// Fetches the next `count` bytes from the program
 fn fetchAmount(self: *Self, count: usize) VmError![]const u8 {
     const end = self.program_counter + count;
-    if (end > self.instructions.len) {
-        self.diagnostics.report("Program counter ({d}) exceeded bounds of program when fetching slice ({d}).", .{ end, self.instructions.len });
+    if (end > self.bytecode.instructions.len) {
+        self.diagnostics.report("Program counter ({d}) exceeded bounds of program when fetching slice ({d}).", .{ end, self.bytecode.instructions.len });
         return error.OutOfProgramBounds;
     }
     defer self.program_counter += count;
-    return self.instructions[self.program_counter..end];
+    return self.bytecode.instructions[self.program_counter..end];
 }
 
 /// Fetches a number from the program
@@ -420,11 +416,11 @@ inline fn fetchNumber(self: *Self, comptime T: type) VmError!T {
 /// Fetches a constant from the program and pushes it onto the stack
 fn fetchConstant(self: *Self) VmError!Value {
     const index = try self.fetchNumber(u16);
-    if (index >= self.constants.len) {
-        self.diagnostics.report("Constant index ({d}) exceeded bounds of constants ({d}).", .{ index, self.constants.len });
+    if (index >= self.bytecode.constants.len) {
+        self.diagnostics.report("Constant index ({d}) exceeded bounds of constants ({d}).", .{ index, self.bytecode.constants.len });
         return error.OutOfProgramBounds;
     }
-    return self.constants[index];
+    return self.bytecode.constants[index];
 }
 
 /// Pushes a value onto the stack or reports and returns an error

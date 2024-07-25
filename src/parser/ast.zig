@@ -136,12 +136,12 @@ pub const VariableStatement = struct {
 };
 
 pub const AssignmentStatement = struct {
-    name: []const u8,
+    lhs: Expression,
     type: Token,
-    expression: Expression,
+    rhs: Expression,
 
     pub fn format(self: AssignmentStatement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        return writer.print("{s} {s} {s};", .{ self.name, self.type, self.expression });
+        return writer.print("{s} {s} {s};", .{ self.lhs, self.type, self.rhs });
     }
 
     /// Returns true if the assignment is a simple assignment.
@@ -247,6 +247,18 @@ pub const RangeExpression = struct {
     inclusive: bool,
 };
 
+/// A list expression is an expression that represents a list of values.
+/// For example, `["a", 2, true, var_name, null]
+pub const ListExpression = struct {
+    expressions: []const Expression,
+};
+
+/// An index expression is a list access operation that takes an expression and an index
+pub const IndexExpression = struct {
+    lhs: *Expression,
+    index: *Expression,
+};
+
 /// A for expression is a loop expression that iterates over a range of values or a collection.
 /// For example, `for(0..10) |i| { doSomething(i); }` is a for expression.
 pub const ForExpression = struct {
@@ -295,6 +307,10 @@ pub const Expression = union(enum) {
     binary: BinaryExpression,
     /// A range expression, such as `0..10` or `0...10`.
     range: RangeExpression,
+    /// A list expression, such as `[1, 2, 3]` or `["a", 2, "c"]
+    list: ListExpression,
+    /// An index expression, such as `list[0]` or `[0, 1, 2, 3][2]
+    index: IndexExpression,
     /// An if expression, such as `if (true) { 1 } else { 2 }`.
     /// TODO: Rename back to @"if" when ZLS fixes the bug with @"" identifiers.
     if_expr: IfExpression,
@@ -320,7 +336,20 @@ pub const Expression = union(enum) {
             .null => writer.writeAll("null"),
             .prefix => |inner| writer.print("({s}{s})", .{ inner.operator, inner.rhs }),
             .binary => |inner| writer.print("({s} {s} {s})", .{ inner.lhs, inner.operator, inner.rhs }),
-            .range => |inner| writer.print("{s}..{s}{s}", .{ inner.start, if (inner.inclusive) "=" else "", inner.end }),
+            .range => |inner| writer.print("{s}..{s}{s}", .{ inner.start, if (inner.inclusive) "." else "", inner.end }),
+            .list => |inner| {
+                try writer.writeAll("[");
+                for (inner.expressions, 0..) |expr, index| {
+                    try writer.print("{s}", .{expr});
+                    if (index + 1 < inner.expressions.len) {
+                        try writer.writeAll(", ");
+                    }
+                }
+                try writer.writeAll("]");
+            },
+            .index => |inner| {
+                try writer.print("{s}[{s}]", .{ inner.lhs, inner.index });
+            },
             .if_expr => |inner| {
                 try writer.writeAll("if (");
                 for (inner.condition_list, 0..) |condition, index| {
@@ -370,6 +399,10 @@ pub const Expression = union(enum) {
     }
 };
 
+pub fn createExpressionStatement(expression: Expression, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = expression, .terminated = terminated } };
+}
+
 pub fn createPrefixStatement(operator: Operator, rhs: *Expression, terminated: bool) Statement {
     return .{ .expression = .{ .expression = .{ .prefix = .{ .operator = operator, .rhs = rhs } }, .terminated = terminated } };
 }
@@ -394,6 +427,10 @@ pub fn createForStatement(expr: *Expression, capture: []const u8, body: *Stateme
     return .{ .expression = .{ .expression = .{ .for_expr = .{ .expr = expr, .capture = capture, .body = body } }, .terminated = terminated } };
 }
 
+pub fn createIndexStatement(expr: *Expression, index_expr: *Expression, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .index = .{ .lhs = expr, .index = index_expr } }, .terminated = terminated } };
+}
+
 pub fn createCallStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {
     return .{ .expression = .{ .expression = .{ .call = .{ .name = name, .arguments = arguments } }, .terminated = terminated } };
 }
@@ -402,8 +439,8 @@ pub fn createCallbackStatement(name: []const u8, parameters: []const Expression,
     return .{ .expression = .{ .expression = .{ .callback = .{ .name = name, .parameters = parameters, .body = body } }, .terminated = terminated } };
 }
 
-pub fn createAssignStatement(name: []const u8, @"type": Token, expression: Expression) Statement {
-    return .{ .assignment = .{ .name = name, .type = @"type", .expression = expression } };
+pub fn createAssignStatement(lhs: Expression, @"type": Token, rhs: Expression) Statement {
+    return .{ .assignment = .{ .lhs = lhs, .type = @"type", .rhs = rhs } };
 }
 
 pub fn createVariableStatement(@"type": Token, name: []const u8, expression: Expression) Statement {

@@ -142,6 +142,8 @@ fn readChar(self: *Self) ?TokenData {
         }, .dot),
         '(' => .left_paren,
         ')' => .right_paren,
+        '[' => .left_bracket,
+        ']' => .right_bracket,
         '{' => .left_brace,
         '}' => .right_brace,
         ',' => .comma,
@@ -301,6 +303,18 @@ test "test assignment lexing" {
         TokenData.create(.{ .identifier = "x" }, 0, 0),
         TokenData.create(.modulo_assignment, 2, 3),
         TokenData.create(.{ .number = "1" }, 5, 5),
+    });
+}
+
+test "test list lexing" {
+    try tokenizeAndExpect("[1, 2, 33]", &.{
+        TokenData.create(.left_bracket, 0, 0),
+        TokenData.create(.{ .number = "1" }, 1, 1),
+        TokenData.create(.comma, 2, 2),
+        TokenData.create(.{ .number = "2" }, 4, 4),
+        TokenData.create(.comma, 5, 5),
+        TokenData.create(.{ .number = "33" }, 7, 8),
+        TokenData.create(.right_bracket, 9, 9),
     });
 }
 

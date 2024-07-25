@@ -23,6 +23,7 @@ pub const Precedence = enum {
     modulo,
     prefix,
     call,
+    index,
 
     pub fn fromToken(token: Token) Precedence {
         return switch (token) {
@@ -35,6 +36,7 @@ pub const Precedence = enum {
             .modulo => .modulo,
             .bang => .prefix,
             .left_paren => .call,
+            .left_bracket => .index,
             inline else => .lowest,
         };
     }
@@ -105,7 +107,7 @@ pub fn allocator(self: *Self) std.mem.Allocator {
 
 /// Allocates a new value on the heap and returns a pointer to it.
 fn moveToHeap(self: *Self, value: anytype) ParserError!*@TypeOf(value) {
-    const ptr = self.allocator().create(@TypeOf(value)) catch return error.OutOfMemory;
+    const ptr = self.allocator().create(@TypeOf(value)) catch return ParserError.OutOfMemory;
     ptr.* = value;
     return ptr;
 }
@@ -137,7 +139,7 @@ pub fn parse(self: *Self) ParserError!Program {
     }
 
     if (self.diagnostics.hasErrors()) {
-        return error.EncounteredErrors;
+        return ParserError.EncounteredErrors;
     }
     return program;
 }
@@ -179,14 +181,19 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
             break :blk null;
         },
         inline else => blk: {
+            const expression = try self.parseExpression(.lowest);
             // try to parse an assignment statement
-            if (self.cursor.hasNext() and self.currentIs(.identifier)) {
-                const next = self.peekToken() catch unreachable;
-                if (next.isAssignment()) {
-                    break :blk try self.parseAssignmentStatement(needs_terminated);
-                }
+            // todo: expand expressions to include dot operator (e.g., this.is.a.nested.identifier)
+            if (self.cursor.hasNext() and self.currentToken().isAssignment() and (expression == .index or expression == .identifier)) {
+                break :blk try self.parseAssignmentStatement(expression, needs_terminated);
             }
-            break :blk try self.parseExpressionStatement();
+
+            var terminated: bool = false;
+            if (self.currentIs(.semicolon)) {
+                self.cursor.advance();
+                terminated = true;
+            }
+            break :blk ast.createExpressionStatement(expression, terminated);
         },
     };
 }
@@ -196,7 +203,7 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
 fn parseVarDeclaration(self: *Self) ParserError!Statement {
     const type_token = self.currentToken();
     if (type_token != .let and type_token != .@"const") {
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     }
     try self.expectPeekAndAdvance(.identifier);
     const identifier_token = self.currentToken();
@@ -211,18 +218,19 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
     } };
 }
 
-fn parseAssignmentStatement(self: *Self, needs_terminated: bool) ParserError!Statement {
-    const identifier_token = self.currentToken();
-    try self.expectCurrentAndAdvance(.identifier);
+fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool) ParserError!Statement {
+    if (lhs != .identifier and lhs != .index) {
+        return ParserError.UnexpectedToken;
+    }
     const assignment_token_data = try self.readAndAdvance();
     if (!assignment_token_data.token.isAssignment()) {
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     }
-    const expression = try self.parseExpression(.lowest);
+    const rhs = try self.parseExpression(.lowest);
     if (needs_terminated) {
         try self.expectCurrentAndAdvance(.semicolon);
     }
-    return .{ .assignment = .{ .name = identifier_token.identifier, .type = assignment_token_data.token, .expression = expression } };
+    return ast.createAssignStatement(lhs, assignment_token_data.token, rhs);
 }
 
 fn parseFunctionDeclaration(self: *Self) ParserError!Statement {
@@ -242,7 +250,7 @@ fn parseFunctionParameters(self: *Self) ParserError![]const Expression {
     for (expressions) |expr| {
         if (expr != .identifier) {
             self.diagnostics.report("expected identifier but got: {}", .{expr});
-            return error.UnexpectedToken;
+            return ParserError.UnexpectedToken;
         }
     }
     return expressions;
@@ -253,31 +261,26 @@ fn parseBlockStatement(self: *Self) ParserError!ast.BlockStatement {
     var statements = std.ArrayList(Statement).init(self.allocator());
     while (!self.currentIs(.right_brace) and self.cursor.canRead()) {
         const statement = try self.parseStatement(true) orelse continue;
-        statements.append(statement) catch return error.OutOfMemory;
+        statements.append(statement) catch return ParserError.OutOfMemory;
     }
     try self.expectCurrentAndAdvance(.right_brace);
-    return .{ .statements = statements.toOwnedSlice() catch return error.OutOfMemory };
+    return .{ .statements = statements.toOwnedSlice() catch return ParserError.OutOfMemory };
+}
+
+fn parseListExpression(self: *Self) ParserError!Expression {
+    // rewind back to the bracket before parsing as an expression list
+    self.cursor.rewind() catch return ParserError.UnexpectedEOF;
+    const list = try self.parseExpressionList(.left_bracket, .right_bracket);
+    return .{ .list = .{ .expressions = list } };
 }
 
 fn parseIdentifier(self: *Self) ParserError!Expression {
     const current = try self.readAndAdvance();
     if (current.token != .identifier) {
         self.diagnostics.report("expected identifier but got: {}", .{current.token});
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     }
     return .{ .identifier = current.token.identifier };
-}
-
-/// Parses an expression as a statement.
-fn parseExpressionStatement(self: *Self) ParserError!Statement {
-    const expression = try self.parseExpression(.lowest);
-
-    var terminated: bool = false;
-    if (self.currentIs(.semicolon)) {
-        self.cursor.advance();
-        terminated = true;
-    }
-    return .{ .expression = .{ .expression = expression, .terminated = terminated } };
 }
 
 /// Parses an expression.
@@ -303,7 +306,7 @@ fn parseIfBody(self: *Self) ParserError!ast.IfExpression.Body {
 fn parseIfExpression(self: *Self) ParserError!Expression {
     if (!self.currentIs(.@"if")) {
         self.diagnostics.report("expected if but got: {}", .{self.currentToken()});
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     }
 
     var condition_list = std.ArrayList(ast.IfExpression.ConditionData).init(self.allocator());
@@ -314,7 +317,7 @@ fn parseIfExpression(self: *Self) ParserError!Expression {
         const condition_ptr = try self.moveToHeap(parsed);
         try self.expectCurrentAndAdvance(.right_paren);
         const body = try self.parseIfBody();
-        condition_list.append(.{ .condition = condition_ptr, .body = body }) catch return error.OutOfMemory;
+        condition_list.append(.{ .condition = condition_ptr, .body = body }) catch return ParserError.OutOfMemory;
         // if we don't have an else if, break out of the loop
         if (!(self.currentIs(.@"else") and self.cursor.hasNext() and self.peekIs(.@"if"))) {
             break;
@@ -329,7 +332,7 @@ fn parseIfExpression(self: *Self) ParserError!Expression {
     };
 
     return .{ .if_expr = .{
-        .condition_list = condition_list.toOwnedSlice() catch return error.OutOfMemory,
+        .condition_list = condition_list.toOwnedSlice() catch return ParserError.OutOfMemory,
         .alternative = alternative,
     } };
 }
@@ -350,7 +353,7 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
     }
     const body = try self.parseStatement(false) orelse {
         self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     };
 
     return .{ .while_expr = .{
@@ -371,14 +374,14 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     const capture = try self.parseExpression(.lowest);
     if (capture != .identifier) {
         self.diagnostics.report("expected identifier but got: {s}", .{capture});
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     }
     const capture_ptr = try self.moveToHeap(capture);
     try self.expectCurrentAndAdvance(.pipe);
     // { ... }
     const body = try self.parseStatement(false) orelse {
         self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     };
 
     return .{ .for_expr = .{
@@ -397,7 +400,7 @@ fn parseRange(self: *Self) ParserError!Expression {
         .exclusive_range => false,
         inline else => {
             self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()});
-            return error.UnexpectedToken;
+            return ParserError.UnexpectedToken;
         },
     };
     self.cursor.advance();
@@ -413,13 +416,13 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
     const current = try self.readAndAdvance();
     return switch (current.token) {
         .plus, .minus, .bang => blk: {
-            const operator = Operator.fromTokenData(current) catch return error.UnexpectedToken;
+            const operator = Operator.fromTokenData(current) catch return ParserError.UnexpectedToken;
             const parsed = try self.parseExpression(.prefix);
             const rhs = try self.moveToHeap(parsed);
             break :blk .{ .prefix = .{ .operator = operator, .rhs = rhs } };
         },
         .number => |inner| .{
-            .number = std.fmt.parseFloat(f64, inner) catch return error.NumberParseFailure,
+            .number = std.fmt.parseFloat(f64, inner) catch return ParserError.NumberParseFailure,
         },
         .string => |inner| .{ .string = inner },
         .true => .{ .boolean = true },
@@ -432,6 +435,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
         },
         .@"while" => try self.parseWhileExpression(),
         .@"for" => try self.parseForExpression(),
+        .left_bracket => try self.parseListExpression(),
         .builtin => |name| try self.parseBuiltinExpression(name),
         .left_paren => blk: {
             const parsed = try self.parseExpression(.lowest);
@@ -440,7 +444,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
         },
         inline else => {
             self.diagnostics.report("no prefix parse rule for token: {}", .{current.token});
-            return error.NoPrefixParseRule;
+            return ParserError.NoPrefixParseRule;
         },
     };
 }
@@ -448,10 +452,12 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
 /// Parses an expression into an infix expression.
 fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression {
     const token_data = try self.readAndAdvance();
-    if (token_data.token == .left_paren) {
-        return try self.parseCallExpression(lhs);
+    switch (token_data.token) {
+        .left_paren => return try self.parseCallExpression(lhs),
+        .left_bracket => return try self.parseIndexExpression(lhs),
+        else => {},
     }
-    const operator = Operator.fromTokenData(token_data) catch return error.UnexpectedToken;
+    const operator = Operator.fromTokenData(token_data) catch return ParserError.UnexpectedToken;
     const parsed = try self.parseExpression(Precedence.fromToken(token_data.token));
     const rhs = try self.moveToHeap(parsed);
 
@@ -462,12 +468,20 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
 fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
     if (expr.* != .identifier) {
         self.diagnostics.report("expected identifier but got: {}", .{expr});
-        return error.UnexpectedToken;
+        return ParserError.UnexpectedToken;
     }
     // rewind the cursor to make sure we can use `parseExpressionList`
     self.cursor.rewind() catch unreachable;
     const arguments = try self.parseExpressionList(.left_paren, .right_paren);
     return .{ .call = .{ .name = expr.identifier, .arguments = arguments } };
+}
+
+/// Parses an index expression given the LHS
+fn parseIndexExpression(self: *Self, lhs: *Expression) ParserError!Expression {
+    const index = try self.parseExpression(.lowest);
+    const index_ptr = try self.moveToHeap(index);
+    try self.expectCurrentAndAdvance(.right_bracket);
+    return .{ .index = .{ .lhs = lhs, .index = index_ptr } };
 }
 
 fn parseBuiltinExpression(self: *Self, raw_name: []const u8) ParserError!Expression {
@@ -498,7 +512,7 @@ fn parseExpressionList(self: *Self, start: TokenTag, sentinel: TokenTag) ParserE
 
 /// Reads the current token and advances the cursor.
 fn readAndAdvance(self: *Self) ParserError!TokenData {
-    return self.cursor.readAndAdvance() orelse return error.UnexpectedEOF;
+    return self.cursor.readAndAdvance() orelse return ParserError.UnexpectedEOF;
 }
 
 /// Returns the current token data.
@@ -511,7 +525,7 @@ fn peekToken(self: *Self) ParserError!Token {
     if (self.cursor.peek()) |data| {
         return data.token;
     }
-    return error.UnexpectedEOF;
+    return ParserError.UnexpectedEOF;
 }
 
 /// Returns true if the current token is the given tag.
@@ -529,11 +543,11 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
         self.diagnostics.report("expected current token: {} but got EOF", .{tag});
-        return error.UnexpectedEOF;
+        return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
         self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() });
-        return error.ExpectedCurrentMismatch;
+        return ParserError.ExpectedCurrentMismatch;
     }
     self.cursor.advance();
 }
@@ -542,11 +556,11 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
 fn expectPeekAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
         self.diagnostics.report("expected peek token: {} but got EOF", .{tag});
-        return error.UnexpectedEOF;
+        return ParserError.UnexpectedEOF;
     }
     if (!self.peekIs(tag)) {
         self.diagnostics.report("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null });
-        return error.ExpectedPeekMismatch;
+        return ParserError.ExpectedPeekMismatch;
     }
     self.cursor.advance();
 }
@@ -569,7 +583,10 @@ fn parseAndExpect(input: []const u8, test_func: *const fn (*Program) anyerror!vo
     defer ally.free(tokens);
     var parser = init(tokens, .{ .ally = ally });
     defer parser.deinit();
-    var program = try parser.parse();
+    var program = parser.parse() catch |err| {
+        parser.diagnostics.dump(std.io.getStdErr().writer());
+        return err;
+    };
     defer program.deinit();
 
     // std.debug.print("Statement: {s}\n", .{program.statements.items[0]});
@@ -654,7 +671,7 @@ test "test assignment types" {
     try parseAndExpect("value = 1;", struct {
         pub fn func(program: *Program) anyerror!void {
             const expected = ast.createAssignStatement(
-                "value",
+                .{ .identifier = "value" },
                 .assignment,
                 Expression{ .number = 1.0 },
             );
@@ -665,7 +682,7 @@ test "test assignment types" {
     try parseAndExpect("value += 1;", struct {
         pub fn func(program: *Program) anyerror!void {
             const expected = ast.createAssignStatement(
-                "value",
+                .{ .identifier = "value" },
                 .plus_assignment,
                 Expression{ .number = 1.0 },
             );
@@ -676,7 +693,7 @@ test "test assignment types" {
     try parseAndExpect("value -= 1;", struct {
         pub fn func(program: *Program) anyerror!void {
             const expected = ast.createAssignStatement(
-                "value",
+                .{ .identifier = "value" },
                 .minus_assignment,
                 Expression{ .number = 1.0 },
             );
@@ -687,7 +704,7 @@ test "test assignment types" {
     try parseAndExpect("value *= 1;", struct {
         pub fn func(program: *Program) anyerror!void {
             const expected = ast.createAssignStatement(
-                "value",
+                .{ .identifier = "value" },
                 .star_assignment,
                 Expression{ .number = 1.0 },
             );
@@ -698,7 +715,7 @@ test "test assignment types" {
     try parseAndExpect("value /= 1;", struct {
         pub fn func(program: *Program) anyerror!void {
             const expected = ast.createAssignStatement(
-                "value",
+                .{ .identifier = "value" },
                 .slash_assignment,
                 Expression{ .number = 1.0 },
             );
@@ -709,7 +726,7 @@ test "test assignment types" {
     try parseAndExpect("value %= 1;", struct {
         pub fn func(program: *Program) anyerror!void {
             const expected = ast.createAssignStatement(
-                "value",
+                .{ .identifier = "value" },
                 .modulo_assignment,
                 Expression{ .number = 1.0 },
             );
@@ -789,6 +806,40 @@ test "test parsing simple for expression" {
                 &block,
                 false,
             );
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing simple list expression" {
+    try parseAndExpect("[\"a\", 2, 3.5, true]", struct {
+        pub fn func(program: *Program) anyerror!void {
+            const a_expr = ast.Expression{ .string = "a" };
+            const two_expr = ast.Expression{ .number = 2 };
+            const three_float_expr = ast.Expression{ .number = 3.5 };
+            const true_expr = ast.Expression{ .boolean = true };
+
+            const list = ast.Expression{ .list = .{ .expressions = &.{
+                a_expr,
+                two_expr,
+                three_float_expr,
+                true_expr,
+            } } };
+            const expected = ast.createExpressionStatement(list, false);
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing simple index expression" {
+    try parseAndExpect("list[1]", struct {
+        pub fn func(program: *Program) anyerror!void {
+            var list_expr = ast.Expression{ .identifier = "list" };
+            var index_expr = ast.Expression{ .number = 1 };
+
+            const expected = ast.createIndexStatement(&list_expr, &index_expr, false);
             const statements = try program.statements.toOwnedSlice();
             try std.testing.expectEqualDeep(expected, statements[0]);
         }

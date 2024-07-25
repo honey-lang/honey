@@ -13,6 +13,8 @@ pub const Value = union(enum) {
     pub const Null = Value{ .null = {} };
     pub const Void = Value{ .void = {} };
 
+    pub const ListMap = std.AutoArrayHashMap(usize, Value);
+
     /// `constant` represents an index to a constant in the constant pool.
     /// This constant is a value that is known at compile time.
     constant: u16,
@@ -28,6 +30,8 @@ pub const Value = union(enum) {
     string: []const u8,
     /// `identifier` represents an identifier.
     identifier: []const u8,
+    /// `list` represents a list of values
+    list: ListMap,
 
     /// Calculates the maximum width of the payload in bytes.
     pub inline fn maxWidth() usize {
@@ -58,6 +62,24 @@ pub const Value = union(enum) {
             .null => other == .null,
             // todo: string hash comparison
             .string => |value| if (other == .string) std.mem.eql(u8, value, other.string) else false,
+            .list => |value| {
+                if (other != .list or value.count() != other.list.count()) {
+                    return false;
+                }
+
+                var value_iterator = value.iterator();
+                while (value_iterator.next()) |value_entry| {
+                    // get other entry from current entry's key
+                    const other_entry = other.list.get(value_entry.key_ptr.*);
+                    if (other_entry == null) {
+                        return false;
+                    }
+                    if (value_entry.value_ptr.* == .string and other_entry.? == .string) {}
+                    if (!value_entry.value_ptr.equal(other_entry.?)) return false;
+                }
+
+                return true;
+            },
             inline else => false,
         };
     }

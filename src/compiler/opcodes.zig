@@ -5,15 +5,17 @@ pub const Opcode = enum(u8) {
     @"return" = 0x00,
     /// The `const` opcode is used to push a constant value onto the stack.
     @"const" = 0x01,
+    /// The `list` opcode is used to create a list from the values on the stack.
+    list = 0x02,
     /// The `pop` opcode is used to pop a value from the stack.
-    pop = 0x02,
+    pop = 0x03,
     /// The `jump` opcode is used to jump to an instruction.
-    jump = 0x03,
+    jump = 0x04,
     /// The `jump_if_false` opcode is used to jump to an instruction if the top of the stack is false.
     /// The top of the stack is popped.
-    jump_if_false = 0x04,
+    jump_if_false = 0x05,
     /// The `loop` opcode is used to jump back `n` instructions.
-    loop = 0x05,
+    loop = 0x06,
     /// The `true` opcode is used to push a true value onto the stack.
     true = 0x10,
     /// The `false` opcode is used to push a false value onto the stack.
@@ -68,6 +70,10 @@ pub const Opcode = enum(u8) {
     set_local = 0x70,
     /// The `get_local` opcode is used to get the value of a local variable.
     get_local = 0x71,
+    /// The `set_index` opcode is used to set the value of a list.
+    set_index = 0x72,
+    /// The `get_index` opcode is used to get the value of a list.
+    get_index = 0x73,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -88,7 +94,7 @@ pub const Opcode = enum(u8) {
 
     /// Returns the payload of the opcode.
     pub fn payload(self: Opcode) type {
-        @setEvalBranchQuota(1500);
+        @setEvalBranchQuota(3000);
         return switch (self) {
             inline else => |inner| std.meta.TagPayload(Instruction, inner),
         };
@@ -114,6 +120,7 @@ pub const Opcode = enum(u8) {
 pub const Instruction = union(Opcode) {
     @"return": void,
     @"const": u16,
+    list: u16,
     pop: void,
     jump: u16,
     jump_if_false: u16,
@@ -145,6 +152,8 @@ pub const Instruction = union(Opcode) {
     get_global: u16,
     set_local: u16,
     get_local: u16,
+    set_index: void,
+    get_index: void,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

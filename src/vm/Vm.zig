@@ -32,6 +32,10 @@ const VmError = error{
     InvalidNumberType,
     /// `UnexpectedValueType` is returned when the type of a value is not what was expected
     UnexpectedValueType,
+    /// `ListAccessOutOfBounds` is returned when a program attempts to access a list value out of bounds
+    ListAccessOutOfBounds,
+    /// `InvalidListKey` is returned when a program attempts to access a list value via a non-number value
+    InvalidListKey,
     /// `GenericError` is returned when an error occurs that does not fit into any other category
     GenericError,
 };
@@ -114,7 +118,7 @@ fn collectGarbage(self: *Self) VmError!void {
             .identifier => self.allocator().free(node.data.identifier),
             inline else => {
                 self.diagnostics.report("Unhandled object type encountered during garbage collection: {s}", .{@tagName(node.data.*)});
-                return error.GenericError;
+                return VmError.GenericError;
             },
         }
         self.allocator().destroy(node.data);
@@ -125,7 +129,7 @@ fn collectGarbage(self: *Self) VmError!void {
 fn trackObject(self: *Self, data: *Value) VmError!void {
     const node = self.allocator().create(ObjectList.Node) catch |err| {
         self.diagnostics.report("Failed to allocate memory for object list node: {any}", .{err});
-        return error.OutOfMemory;
+        return VmError.OutOfMemory;
     };
     node.* = .{ .data = data, .next = self.objects.first };
 
@@ -136,7 +140,7 @@ fn trackObject(self: *Self, data: *Value) VmError!void {
 pub fn createString(self: *Self, value: []const u8) !Value {
     const string = self.allocator().dupe(u8, value) catch |err| {
         self.diagnostics.report("Failed to allocate memory for string: {any}", .{err});
-        return error.OutOfMemory;
+        return VmError.OutOfMemory;
     };
 
     const created = self.allocator().create(Value) catch |err| {
@@ -212,6 +216,23 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const constant = try self.fetchConstant();
             try self.pushOrError(constant);
         },
+        .list => {
+            const len = try self.fetchNumber(u16);
+
+            var list = Value.ListMap.init(self.allocator());
+
+            for (0..len) |index| {
+                var value = try self.popOrError();
+                // if it is heap-allocated, we need to initalize it
+                switch (value) {
+                    .string => |string| value = try self.createString(string),
+                    .list => |_| {},
+                    else => {},
+                }
+                try list.put(index, value);
+            }
+            try self.pushOrError(.{ .list = list });
+        },
         // constant value instructions
         .true => try self.pushOrError(Value.True),
         .false => try self.pushOrError(Value.False),
@@ -226,7 +247,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const value = try self.popOrError();
             if (value != .number) {
                 self.diagnostics.report("Attempted to negate non-number value: {s}", .{value});
-                return error.UnexpectedValueType;
+                return VmError.UnexpectedValueType;
             }
             try self.pushOrError(.{ .number = -value.number });
         },
@@ -234,7 +255,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const value = try self.popOrError();
             if (value != .boolean) {
                 self.diagnostics.report("Attempted to negate non-boolean value: {s}", .{value});
-                return error.UnexpectedValueType;
+                return VmError.UnexpectedValueType;
             }
             try self.pushOrError(nativeBoolToValue(!value.boolean));
         },
@@ -263,12 +284,12 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                     map_name,
                     decl_name.identifier,
                 });
-                return error.GenericError;
+                return VmError.GenericError;
             }
 
             map.putNoClobber(decl_name.identifier, value) catch |err| {
                 self.diagnostics.report("Failed to declare global {s}: {any}", .{ map_name, err });
-                return error.GenericError;
+                return VmError.GenericError;
             };
         },
         .set_global => {
@@ -278,10 +299,10 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 // check if it's a constant & error if it is
                 if (self.global_constants.contains(variable_name.identifier)) {
                     self.diagnostics.report("Unable to reassign constant: {s}", .{variable_name.identifier});
-                    return error.GenericError;
+                    return VmError.GenericError;
                 }
                 self.diagnostics.report("Variable not found: {s}", .{variable_name.identifier});
-                return error.VariableNotFound;
+                return VmError.VariableNotFound;
             }
             const value = try self.popOrError();
             self.global_variables.put(variable_name.identifier, value) catch |err| {
@@ -293,13 +314,13 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const offset = try self.fetchNumber(u16);
             const value = self.stack.pop() catch {
                 self.diagnostics.report("Local variable not found at offset {d}", .{offset});
-                return error.GenericError;
+                return VmError.GenericError;
             };
             // std.debug.print("- Setting local variable at offset {d}: {s}\n", .{ offset, value });
 
             self.stack.set(offset, value) catch |err| {
                 self.diagnostics.report("Failed to set local variable at offset {d}: {any}", .{ offset, err });
-                return error.GenericError;
+                return VmError.GenericError;
             };
         },
         .get_global => {
@@ -312,7 +333,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             else {
                 // todo: builtin variables
                 self.diagnostics.report("Variable not found: {s}", .{global_name.identifier});
-                return error.GenericError;
+                return VmError.GenericError;
             };
             try self.pushOrError(value);
         },
@@ -320,11 +341,42 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             const offset = try self.fetchNumber(u16);
             const value = self.stack.get(offset) catch {
                 self.diagnostics.report("Local variable not found at offset {d}", .{offset});
-                return error.GenericError;
+                return VmError.GenericError;
             };
             // std.debug.print("* Getting local variable at offset {d}: {s}\n", .{ offset, value });
 
             try self.pushOrError(value);
+        },
+        .get_index => {
+            const index_value = try self.popOrError();
+            if (index_value != .number) {
+                self.diagnostics.report("Expected index to be a number but got {s}", .{index_value});
+                return VmError.InvalidListKey;
+            }
+            if (@floor(index_value.number) != index_value.number) {
+                self.diagnostics.report("Expected index to be an integer but got {s}", .{index_value});
+                return VmError.GenericError;
+            }
+
+            const list_value = try self.popOrError();
+            if (list_value != .list) {
+                self.diagnostics.report("Expected expression to be a list but got {s}", .{list_value});
+                return VmError.GenericError;
+            }
+
+            const index: usize = @intFromFloat(index_value.number);
+            const length = list_value.list.count();
+            if (index < 0 or index >= length) {
+                self.diagnostics.report("Attempted to access list out of bounds. Length: {d}, Index: {d}", .{ length, index });
+                return VmError.ListAccessOutOfBounds;
+            }
+
+            // reverse index due to it being stack-based
+            const real_index = (length - 1) - index;
+            try self.pushOrError(list_value.list.get(real_index) orelse .null);
+        },
+        .set_index => {
+            // fetch list, fetch index, update at index with new expression
         },
         .call_builtin => {
             const builtin = try self.fetchConstant();
@@ -334,22 +386,22 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 const arg = try self.popOrError();
                 args_list.append(arg) catch |err| {
                     self.diagnostics.report("Failed to append argument to builtin arguments: {any}", .{err});
-                    return error.GenericError;
+                    return VmError.GenericError;
                 };
             }
             const args = args_list.toOwnedSlice() catch |err| {
                 self.diagnostics.report("Failed to convert arguments to owned slice: {any}", .{err});
-                return error.GenericError;
+                return VmError.GenericError;
             };
             defer self.allocator().free(args);
             std.mem.reverse(Value, args);
             const run_func = self.builtins.get(builtin.identifier) orelse {
                 self.diagnostics.report("Builtin not found: @{s}", .{builtin.identifier});
-                return error.GenericError;
+                return VmError.GenericError;
             };
             const output = run_func(self, args) catch |err| {
                 self.diagnostics.report("Failed to run builtin function: {any}", .{err});
-                return error.GenericError;
+                return VmError.GenericError;
             };
             try self.pushOrError(if (output) |value| value else Value.Void);
         },
@@ -438,8 +490,29 @@ fn pushOrError(self: *Self, value: Value) VmError!void {
     };
 }
 
+fn freeValue(self: *Self, value: Value) void {
+    switch (value) {
+        .list => |list| {
+            var iterator = list.iterator();
+            while (iterator.next()) |entry| {
+                self.freeValue(entry.value_ptr.*);
+            }
+        },
+        .string => |_| {
+            // todo: separate interned strings from reg strings
+            // don't free if interned
+            // self.allocator().free(string);
+        },
+        else => {},
+    }
+}
+
 /// Pops a value from the stack or reports and returns an error
 fn popOrError(self: *Self) VmError!Value {
+    // when last popped becomes the penultimate, we will free the memory since we're holding no more references to it
+    if (self.last_popped) |last_popped| {
+        self.freeValue(last_popped);
+    }
     self.last_popped = self.stack.pop() catch {
         self.diagnostics.report("Failed to pop value from stack: {s}", .{self.bytecode});
         return error.StackUnderflow;

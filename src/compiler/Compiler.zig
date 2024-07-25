@@ -351,40 +351,58 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {
-            if (self.scope_context.resolveLocalOffset(inner.name)) |offset| {
+            if (inner.lhs == .index) {
+                const index_expr = inner.lhs.index;
+                if (index_expr.lhs.* != .identifier) {
+                    self.diagnostics.report("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
+                    return Error.UnexpectedType;
+                }
+                const index_identifier = index_expr.lhs.identifier;
+                // fetch list, fetch index, update at index with new expression
+
+                if (self.scope_context.resolveLocalOffset(index_identifier)) |offset| {
+                    _ = offset;
+                } else {
+                    const index = try self.addConstant(.{ .identifier = index_identifier });
+                    _ = index;
+                }
+                return;
+            }
+            const name = inner.lhs.identifier;
+            if (self.scope_context.resolveLocalOffset(name)) |offset| {
                 // fetch local
                 const local = self.scope_context.getLocal(offset) catch |err| {
-                    self.diagnostics.report("Local variable out of bounds: {s}", .{inner.name});
+                    self.diagnostics.report("Local variable out of bounds: {s}", .{name});
                     return err;
                 };
 
                 // if local is a constant, error out
                 if (local.is_const) {
-                    self.diagnostics.report("Cannot reassign constant variable: {s}", .{inner.name});
+                    self.diagnostics.report("Cannot reassign constant variable: {s}", .{name});
                     return Error.VariableAlreadyExists;
                 }
 
                 if (!inner.isSimple()) {
                     try self.addInstruction(.{ .get_local = offset });
-                    try self.compileExpression(inner.expression);
+                    try self.compileExpression(inner.rhs);
 
                     const instr = try self.resolveAssignToInstr(inner.type);
                     try self.addInstruction(instr);
                 } else {
-                    try self.compileExpression(inner.expression);
+                    try self.compileExpression(inner.rhs);
                 }
 
                 try self.addInstruction(.{ .set_local = offset });
             } else {
-                const index = try self.addConstant(.{ .identifier = inner.name });
+                const index = try self.addConstant(.{ .identifier = name });
                 if (!inner.isSimple()) {
                     try self.addInstruction(.{ .get_global = index });
-                    try self.compileExpression(inner.expression);
+                    try self.compileExpression(inner.rhs);
 
                     const instr = try self.resolveAssignToInstr(inner.type);
                     try self.addInstruction(instr);
                 } else {
-                    try self.compileExpression(inner.expression);
+                    try self.compileExpression(inner.rhs);
                 }
 
                 try self.addInstruction(.{ .set_global = index });
@@ -627,6 +645,11 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.scope_context.patchLoop(self, post_loop_expr, loop_end_instr);
             try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_end_instr.index - jif_target.index) });
         },
+        .index => |value| {
+            try self.compileExpression(value.lhs.*);
+            try self.compileExpression(value.index.*);
+            try self.addInstruction(.get_index);
+        },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
             try self.addInstruction(.{ .@"const" = index });
@@ -635,7 +658,13 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             const index = try self.addConstant(.{ .string = value });
             try self.addInstruction(.{ .@"const" = index });
         },
-        .boolean => |inner| try self.addInstruction(if (inner) .true else .false),
+        .list => |value| {
+            for (value.expressions) |expr| {
+                try self.compileExpression(expr);
+            }
+            try self.addInstruction(.{ .list = @intCast(value.expressions.len) });
+        },
+        .boolean => |value| try self.addInstruction(if (value) .true else .false),
         .null => try self.addInstruction(.null),
         .identifier => |value| {
             if (self.scope_context.resolveLocalOffset(value)) |offset| {
@@ -754,6 +783,50 @@ test "ensure compiler errors on reassignment of const variable" {
     try compileAndTestError(source, struct {
         fn run(bytecode_union: anytype) anyerror!void {
             try std.testing.expectError(Error.VariableAlreadyExists, bytecode_union);
+        }
+    }.run);
+}
+
+test "test simple list compilation" {
+    try compileAndTest("[1, 2, 3]", struct {
+        fn run(bytecode: Bytecode) anyerror!void {
+            const expected_bytes = opcodes.make(&[_]Instruction{
+                .{ .@"const" = 0x00 },
+                .{ .@"const" = 0x01 },
+                .{ .@"const" = 0x02 },
+                .{ .list = 3 },
+                .pop,
+            });
+            try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
+            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 }, .{ .number = 3 } }, bytecode.constants);
+        }
+    }.run);
+}
+
+test "test simple list access compilation" {
+    const source =
+        \\{
+        \\  const test = [1, 2, 3];
+        \\  const value = test[1];
+        \\}
+    ;
+    try compileAndTest(source, struct {
+        fn run(bytecode: Bytecode) anyerror!void {
+            const expected_bytes = opcodes.make(&[_]Instruction{
+                // const test = [1, 2, 3];
+                .{ .@"const" = 0x00 },
+                .{ .@"const" = 0x01 },
+                .{ .@"const" = 0x02 },
+                .{ .list = 3 },
+                // const value = test[1];
+                .{ .get_local = 0 },
+                .{ .@"const" = 0x00 },
+                .get_index,
+                .pop,
+                .pop,
+            });
+            try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
+            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 }, .{ .number = 3 } }, bytecode.constants);
         }
     }.run);
 }

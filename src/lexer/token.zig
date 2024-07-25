@@ -92,6 +92,10 @@ pub const TokenTag = enum {
     left_paren,
     /// .right_paren represents the character ')'
     right_paren,
+    /// .left_bracket represents the character '['
+    left_bracket,
+    /// .right_bracket represents the character ']'
+    right_bracket,
     /// .left_brace represents the character '{'
     left_brace,
     /// .right_brace represents the character '}'
@@ -154,6 +158,8 @@ pub const Token = union(TokenTag) {
     comma,
     left_paren,
     right_paren,
+    left_bracket,
+    right_bracket,
     left_brace,
     right_brace,
     dot,

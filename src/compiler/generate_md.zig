@@ -26,7 +26,7 @@ pub fn main() !void {
 
         try table.addRow(&.{
             std.fmt.comptimePrint("`{s}`", .{instruction.name}),
-            std.fmt.comptimePrint("0x{x:0<2}", .{@intFromEnum(opcode)}),
+            std.fmt.comptimePrint("0x{x:0>2}", .{@intFromEnum(opcode)}),
             comptime printTypeName(instruction.type),
         });
     }

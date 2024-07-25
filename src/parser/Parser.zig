@@ -754,11 +754,12 @@ test "test parsing simple while expression" {
                 .operator = .less_than,
                 .rhs = &while_condition_rhs,
             } };
+            var block = ast.createBlockStatement(&[_]ast.Statement{
+                ast.createCallStatement("doSomething", &.{}, true),
+            });
             const expected = ast.createWhileStatement(
                 &while_condition,
-                ast.BlockStatement{ .statements = &[_]ast.Statement{
-                    ast.createCallStatement("doSomething", &.{}, true),
-                } },
+                &block,
                 null,
                 false,
             );
@@ -778,12 +779,14 @@ test "test parsing simple for expression" {
                 .end = &for_end,
                 .inclusive = false,
             } };
+
+            var block = ast.createBlockStatement(&[_]ast.Statement{
+                ast.createCallStatement("doSomething", &.{}, true),
+            });
             const expected = ast.createForStatement(
                 &for_range,
                 "i",
-                ast.BlockStatement{ .statements = &[_]ast.Statement{
-                    ast.createCallStatement("doSomething", &.{}, true),
-                } },
+                &block,
                 false,
             );
             const statements = try program.statements.toOwnedSlice();

@@ -592,7 +592,7 @@ inline fn nativeBoolToValue(value: bool) Value {
 
 test "ensure program results in correct value" {
     const ally = std.testing.allocator;
-    const result = try honey.compile("1 + 2", .{ .allocator = ally, .error_writer = std.io.getStdErr().writer() });
+    const result = try honey.compile(.{ .string = "1 + 2" }, .{ .allocator = ally, .error_writer = std.io.getStdErr().writer() });
     defer result.deinit();
     var vm = Self.init(result.data, ally, .{});
     defer vm.deinit();

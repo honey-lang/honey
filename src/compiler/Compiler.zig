@@ -682,7 +682,7 @@ inline fn compileAndTest(source: []const u8, test_fn: *const fn (bytecode: Bytec
     var program = ast.Program.init(ally);
     defer program.deinit();
 
-    const result = try honey.parse(source, .{
+    const result = try honey.parse(.{ .string = source }, .{
         .allocator = ally,
         .error_writer = std.io.getStdErr().writer(),
     });
@@ -702,7 +702,7 @@ inline fn compileAndTestError(source: []const u8, test_fn: *const fn (bytecode_u
     var program = ast.Program.init(ally);
     defer program.deinit();
 
-    const result = try honey.parse(source, .{
+    const result = try honey.parse(.{ .string = source }, .{
         .allocator = ally,
         .error_writer = std.io.getStdErr().writer(),
     });

@@ -1,9 +1,5 @@
-
-{
-    let list_1 = [1, "a", true, null];
-    let list_2 = [1, "a", true, null];
-    // let list_3 = [1, 2, 3, 4];
-    @println("Equal: ", list_1 == list_2);
-    // @println("Not Equal: ", list_1 == list_3);
-
-}
+let list_1 = [1, "a", true, null];
+let list_2 = [];
+// let list_3 = [1, 2, 3, 4];
+@println("Equal: ", list_1 == list_2);
+// @println("Not Equal: ", list_1 == list_3);

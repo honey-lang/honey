@@ -1,6 +1,12 @@
 # honey
 honey is a small, embeddable scripting language written in Zig. At its core, honey takes inspiration from languages like Zig, JavaScript/TypeScript, Rust, and Elixir. It's designed to be a simple and easy to use language with a high ceiling for power users. Performance is a key goal of honey, and it's designed to be as fast as possible. Benchmarks will be provided in the future.
 
+## building
+honey can be built using this simple command:
+```
+zig build -Doptimize=ReleaseFast
+```
+
 ## examples
 
 ### accumulator

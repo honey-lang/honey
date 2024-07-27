@@ -1,5 +1,6 @@
-{
-    let list = [];
-    for(0...10) |i| list[i] = i ** 2;
-    for (0...10) |i| @println(i, ": ", list[i]);
-}
+const SIZE = 10_000;
+
+
+let list = [];
+for (0...SIZE) |i| list[i] = i ** 2;
+for (0...SIZE) |i| @println(i, ": ", list[i]);

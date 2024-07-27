@@ -351,6 +351,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {
+            // todo: find a way to reduce code duplication
             if (inner.lhs == .index) {
                 const index_expr = inner.lhs.index;
                 if (index_expr.lhs.* != .identifier) {
@@ -359,15 +360,28 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 }
                 const index_identifier = index_expr.lhs.identifier;
                 // fetch list, fetch index, update at index with new expression
-
                 if (self.scope_context.resolveLocalOffset(index_identifier)) |offset| {
-                    _ = offset;
+                    // get list
+                    try self.addInstruction(.{ .get_local = offset });
+                    // compile index & fetch
+                    try self.compileExpression(index_expr.index.*);
+
+                    try self.compileExpression(inner.rhs);
+                    try self.addInstruction(.set_index);
+                    try self.addInstruction(.{ .set_local = offset });
                 } else {
                     const index = try self.addConstant(.{ .identifier = index_identifier });
-                    _ = index;
+                    try self.addInstruction(.{ .get_global = index });
+                    // compile index & fetch
+                    try self.compileExpression(index_expr.index.*);
+
+                    try self.compileExpression(inner.rhs);
+                    try self.addInstruction(.set_index);
+                    try self.addInstruction(.{ .set_global = index });
                 }
                 return;
             }
+
             const name = inner.lhs.identifier;
             if (self.scope_context.resolveLocalOffset(name)) |offset| {
                 // fetch local
@@ -597,9 +611,9 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.addInstruction(.void);
         },
         .for_expr => |inner| {
+            // todo: list iteration
             var jif_target: CompiledInstruction = undefined;
             // the loop should start before the condition
-
             const range = inner.expr.range;
 
             try self.compileExpression(range.start.*);

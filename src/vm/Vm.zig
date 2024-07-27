@@ -365,18 +365,25 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
 
             const index: usize = @intFromFloat(index_value.number);
-            const length = list_value.list.count();
-            if (index < 0 or index >= length) {
-                self.diagnostics.report("Attempted to access list out of bounds. Length: {d}, Index: {d}", .{ length, index });
-                return VmError.ListAccessOutOfBounds;
-            }
-
-            // reverse index due to it being stack-based
-            const real_index = (length - 1) - index;
-            try self.pushOrError(list_value.list.get(real_index) orelse .null);
+            try self.pushOrError(list_value.list.get(index) orelse .null);
         },
         .set_index => {
+            const new_value = try self.popOrError();
             // fetch list, fetch index, update at index with new expression
+            const index_value = try self.popOrError();
+            if (index_value != .number) {
+                self.diagnostics.report("Expected list key to be number but got {s}", .{index_value});
+                return VmError.InvalidListKey;
+            }
+            const index: usize = @intFromFloat(index_value.number);
+
+            var list_value = try self.popOrError();
+            if (list_value != .list) {
+                self.diagnostics.report("Expected list but got {s}", .{index_value});
+                return VmError.GenericError;
+            }
+            try list_value.list.put(index, new_value);
+            try self.pushOrError(list_value);
         },
         .call_builtin => {
             const builtin = try self.fetchConstant();

@@ -196,7 +196,15 @@ pub const Value = union(enum) {
             .void => try writer.writeAll("void"),
             .string => |value| try writer.print("\"{s}\"", .{value}),
             .identifier => |value| try writer.print("{s}", .{value}),
-            inline else => {},
+            .list => |value| {
+                var iterator = value.iterator();
+                try writer.writeAll("[");
+                while (iterator.next()) |entry| {
+                    try writer.print("{s}", .{entry.value_ptr});
+                }
+                try writer.writeAll("]");
+            },
+            inline else => try writer.print("{s}", .{@tagName(self)}),
         }
     }
 };

@@ -366,7 +366,18 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
 fn parseForExpression(self: *Self) ParserError!Expression {
     // for (0..10)
     try self.expectCurrentAndAdvance(.left_paren);
-    const range = try self.parseRange();
+    const expr = switch (self.currentToken()) {
+        .number => try self.parseRange(),
+        inline else => try self.parseExpression(.lowest),
+    };
+    switch (expr) {
+        .identifier, .list, .range => {},
+        inline else => {
+            self.diagnostics.report("expected identifier, list, or range but got {s}", .{expr});
+            return ParserError.UnexpectedToken;
+        },
+    }
+
     try self.expectCurrentAndAdvance(.right_paren);
 
     // |i|
@@ -385,7 +396,7 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     };
 
     return .{ .for_expr = .{
-        .expr = try self.moveToHeap(range),
+        .expr = try self.moveToHeap(expr),
         .capture = capture_ptr.identifier,
         .body = try self.moveToHeap(body),
     } };

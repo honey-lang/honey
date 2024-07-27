@@ -207,13 +207,18 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
     }
     try self.expectPeekAndAdvance(.identifier);
     const identifier_token = self.currentToken();
+
+    // if the next token is a colon, we should expect a type name to be given
     const type_token = if (self.peekIs(.colon)) token: {
         self.cursor.advance();
         try self.expectPeekAndAdvance(.identifier);
         break :token self.currentToken();
     } else null;
+
+    // we aren't storing the assignment token so we can skip past it once we peek at it
     try self.expectPeekAndAdvance(.assignment);
     self.cursor.advance();
+
     const expression = try self.parseExpression(.lowest);
     try self.expectCurrentAndAdvance(.semicolon);
     return .{ .variable = .{

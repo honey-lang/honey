@@ -207,10 +207,10 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
     }
     try self.expectPeekAndAdvance(.identifier);
     const identifier_token = self.currentToken();
-    const type_token = if (self.peekIs(.colon)) type_name: {
+    const type_token = if (self.peekIs(.colon)) token: {
         self.cursor.advance();
         try self.expectPeekAndAdvance(.identifier);
-        break :type_name self.currentToken();
+        break :token self.currentToken();
     } else null;
     try self.expectPeekAndAdvance(.assignment);
     self.cursor.advance();

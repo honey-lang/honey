@@ -334,7 +334,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.compileExpression(inner.expression);
 
                 try self.markGlobal(inner.name);
-                try self.addInstruction(if (inner.type == .@"const") .{ .declare_const = index } else .{ .declare_var = index });
+                try self.addInstruction(if (inner.kind == .@"const") .{ .declare_const = index } else .{ .declare_var = index });
                 return;
             }
 
@@ -347,7 +347,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 }
             }
 
-            _ = try self.scope_context.addLocal(inner.name, inner.type == .@"const");
+            _ = try self.scope_context.addLocal(inner.name, inner.kind == .@"const");
             try self.compileExpression(inner.expression);
         },
         .assignment => |inner| {

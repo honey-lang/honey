@@ -122,16 +122,27 @@ pub const ExpressionStatement = struct {
 };
 
 pub const VariableStatement = struct {
-    type: Token,
+    kind: Token,
     name: []const u8,
+    type: ?[]const u8 = null,
     expression: Expression,
 
     pub fn isConst(self: VariableStatement) bool {
-        return self.type == .@"const";
+        return self.kind == .@"const";
+    }
+
+    pub fn hasType(self: VariableStatement) bool {
+        return self.type != null;
     }
 
     pub fn format(self: VariableStatement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        return writer.print("{s} {s} = {s};", .{ if (self.type == .let) "let" else "const", self.name, self.expression });
+        return writer.print("{s} {s}{s}{s} = {s};", .{
+            if (self.kind == .let) "let" else "const",
+            self.name,
+            if (self.type != null) ": " else "",
+            if (self.type) |type_name| type_name else "",
+            self.expression,
+        });
     }
 };
 
@@ -443,8 +454,8 @@ pub fn createAssignStatement(lhs: Expression, @"type": Token, rhs: Expression) S
     return .{ .assignment = .{ .lhs = lhs, .type = @"type", .rhs = rhs } };
 }
 
-pub fn createVariableStatement(@"type": Token, name: []const u8, expression: Expression) Statement {
-    return .{ .variable = .{ .type = @"type", .name = name, .expression = expression } };
+pub fn createVariableStatement(kind: Token, name: []const u8, @"type": ?[]const u8, expression: Expression) Statement {
+    return .{ .variable = .{ .kind = kind, .name = name, .type = @"type", .expression = expression } };
 }
 
 pub fn createFunctionStatement(name: []const u8, parameters: []const Expression, body: BlockStatement) Statement {

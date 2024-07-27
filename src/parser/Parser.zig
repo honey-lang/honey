@@ -199,21 +199,27 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
 }
 
 /// Parses a let/const statement.
-/// let x = 5; OR const x = 5;
+/// let x: int = 5; OR const x = 5;
 fn parseVarDeclaration(self: *Self) ParserError!Statement {
-    const type_token = self.currentToken();
-    if (type_token != .let and type_token != .@"const") {
+    const kind_token = self.currentToken();
+    if (kind_token != .let and kind_token != .@"const") {
         return ParserError.UnexpectedToken;
     }
     try self.expectPeekAndAdvance(.identifier);
     const identifier_token = self.currentToken();
+    const type_token = if (self.peekIs(.colon)) type_name: {
+        self.cursor.advance();
+        try self.expectPeekAndAdvance(.identifier);
+        break :type_name self.currentToken();
+    } else null;
     try self.expectPeekAndAdvance(.assignment);
     self.cursor.advance();
     const expression = try self.parseExpression(.lowest);
     try self.expectCurrentAndAdvance(.semicolon);
     return .{ .variable = .{
-        .type = type_token,
+        .kind = kind_token,
         .name = identifier_token.identifier,
+        .type = if (type_token) |token| token.identifier else null,
         .expression = expression,
     } };
 }

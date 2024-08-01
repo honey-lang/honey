@@ -6,6 +6,10 @@ const honey = await loadHoney({
         const string = decodeString(ptr, len);
         console.log(string);
       },
+      honey_error(ptr: number, len: number) {
+        const string = decodeString(ptr, len);
+        console.error(string);
+      }
     },
 });
 

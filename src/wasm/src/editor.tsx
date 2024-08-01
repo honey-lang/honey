@@ -63,6 +63,8 @@ export interface MonacoEditorProps {
         monaco.editor.setTheme("honey");
         // todo: custom language highlighting
         monaco.editor.setModelLanguage(editor.getModel()!, "rust");
+
+        editor.setValue(props.value ?? "");
   
         monacoOnChangeSubscription = editor.onDidChangeModelContent(event => {
           if (!isOnChangeSuppressed) {

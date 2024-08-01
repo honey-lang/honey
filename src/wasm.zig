@@ -12,30 +12,40 @@ const allocator = std.heap.wasm_allocator;
 /// A small buffer to hold a formatted string of the last popped value.
 export var last_popped: [1024]u8 = undefined;
 
-pub const LogWriter = struct {
-    /// A log function exported by JS to log messages from the VM.
-    extern fn honey_log(msg: [*]const u8, len: usize) void;
+/// A generic writer used to wrap external console.* functions.
+pub fn ConsoleWriter(comptime log_func: *const fn (msg: [*]const u8, len: usize) callconv(.C) void) type {
+    return struct {
+        const Self = @This();
 
-    /// Writes a message to the log.
-    pub fn write(self: *const LogWriter, msg: []const u8) anyerror!usize {
-        _ = self; // autofix
-        honey_log(msg.ptr, msg.len);
-        return msg.len;
-    }
+        /// Writes a message to the log.
+        pub fn write(self: *const Self, msg: []const u8) anyerror!usize {
+            _ = self;
+            log_func(msg.ptr, msg.len);
+            return msg.len;
+        }
 
-    /// Returns a writer that can be used for logging.
-    pub fn any(self: *const LogWriter) std.io.AnyWriter {
-        return std.io.AnyWriter{
-            .context = self,
-            .writeFn = struct {
-                pub fn write(context: *const anyopaque, bytes: []const u8) !usize {
-                    var log_writer: *const LogWriter = @ptrCast(@alignCast(context));
-                    return try log_writer.write(bytes);
-                }
-            }.write,
-        };
-    }
-};
+        /// Returns a writer that can be used for logging.
+        pub fn any(self: *const Self) std.io.AnyWriter {
+            return std.io.AnyWriter{
+                .context = self,
+                .writeFn = struct {
+                    pub fn write(context: *const anyopaque, bytes: []const u8) !usize {
+                        var log_writer: *const LogWriter = @ptrCast(@alignCast(context));
+                        return try log_writer.write(bytes);
+                    }
+                }.write,
+            };
+        }
+    };
+}
+
+/// A log function exported by JS to log messages from the VM.
+extern fn honey_log(msg: [*]const u8, len: usize) void;
+/// An error function exported by JS to log errors from the VM.
+extern fn honey_error(msg: [*]const u8, len: usize) void;
+
+pub const LogWriter = ConsoleWriter(honey_log);
+pub const ErrorWriter = ConsoleWriter(honey_error);
 
 /// Allocates a slice of u8 for use in JS.
 export fn allocU8(length: u32) [*]const u8 {
@@ -44,26 +54,31 @@ export fn allocU8(length: u32) [*]const u8 {
 }
 
 export fn run(source: [*]u8, source_len: usize) usize {
-    var writer = LogWriter{};
+    var log_writer = LogWriter{};
+    var error_writer = ErrorWriter{};
+
     const result = compile(source[0..source_len], .{
-        .error_writer = writer.any(),
-    }) catch |err| {
-        std.debug.panic("Error compiling source: {any}\n", .{err});
+        .error_writer = error_writer.any(),
+    }) catch {
+        // `compile` already logs the error so we can just return 0 here.
+        return 0;
     };
     defer result.deinit();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     var vm = Vm.init(result.data, arena.allocator(), .{
         .dump_bytecode = false,
-        .writer = writer.any(),
+        .writer = log_writer.any(),
     });
-    vm.run() catch |err| {
-        std.debug.panic("Error running VM: {any}\n", .{err});
+    vm.run() catch {
+        vm.diagnostics.dump(error_writer.any());
+        return 0;
     };
     defer vm.deinit();
 
     const output = std.fmt.bufPrint(&last_popped, "{s}", .{vm.getLastPopped() orelse .void}) catch |err| {
-        std.debug.panic("Error formatting last popped value: {any}\n", .{err});
+        error_writer.any().print("Error formatting last popped value: {any}\n", .{err}) catch unreachable;
+        return 0;
     };
 
     return output.len;

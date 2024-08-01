@@ -37,11 +37,11 @@ pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
     };
     const tokens = try tokenize(input, arena.allocator());
 
-    var parser = Parser.init(tokens, .{ .ally = arena.allocator() });
+    var parser = Parser.init(tokens, .{ .ally = arena.allocator(), .error_writer = std.io.getStdErr().writer().any() });
     defer parser.deinit();
 
     const data = parser.parse() catch |err| {
-        parser.report(options.error_writer);
+        parser.report(options.error_writer.any());
         return err;
     };
 
@@ -91,9 +91,10 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
     var arena = std.heap.ArenaAllocator.init(options.allocator);
     var vm = Vm.init(result.data, arena.allocator(), .{
         .dump_bytecode = options.dump_bytecode,
+        .writer = std.io.getStdErr().writer().any(),
     });
     vm.run() catch |err| {
-        vm.report(options.error_writer);
+        vm.report(options.error_writer.any());
         return err;
     };
     return Result(Vm){ .data = vm, .arena = arena };

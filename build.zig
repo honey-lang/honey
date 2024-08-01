@@ -5,18 +5,18 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     // create exports for the wasm target
     if (target.result.isWasm()) {
-        const lib = b.addSharedLibrary(.{
+        const exe = b.addExecutable(.{
             .name = "honey",
             .root_source_file = b.path("src/wasm.zig"),
             .target = target,
             .optimize = .ReleaseSmall,
             .version = .{ .major = 0, .minor = 0, .patch = 1 },
         });
-        // used to ensure exports
-        lib.rdynamic = true;
+        exe.rdynamic = true;
+        exe.entry = .disabled;
 
-        const install = b.addInstallArtifact(lib, .{});
-        install.step.dependOn(&lib.step);
+        const install = b.addInstallArtifact(exe, .{});
+        install.step.dependOn(&exe.step);
         b.default_step.dependOn(&install.step);
         return;
     }

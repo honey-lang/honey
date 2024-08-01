@@ -3,3 +3,4 @@ benchmarks/
 zig-out/
 playground/
 .vscode/
+node_modules/

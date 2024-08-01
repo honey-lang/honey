@@ -73,11 +73,14 @@ stack: utils.Stack(Value),
 last_popped: ?Value = null,
 /// The virtual machine options
 options: VmOptions,
+/// The writer to use for output and debugging
+writer: std.io.AnyWriter,
 
 /// The options for the virtual machine
 pub const VmOptions = struct {
     /// If enabled, it will dump the bytecode into stderr before running the program
     dump_bytecode: bool = false,
+    writer: std.io.AnyWriter,
 };
 
 /// Initializes the VM with the needed values
@@ -91,6 +94,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
         .options = options,
+        .writer = options.writer,
     };
     self.addBuiltinLibrary(@import("../builtins.zig"));
     return self;
@@ -182,10 +186,9 @@ pub fn getLastPopped(self: *Self) ?Value {
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
     if (self.options.dump_bytecode) {
-        const writer = std.io.getStdErr().writer();
-        writer.writeAll("------------ Bytecode ------------\n") catch unreachable;
-        self.bytecode.dump(writer) catch unreachable;
-        writer.writeAll("----------------------------------\n") catch unreachable;
+        self.writer.writeAll("------------ Bytecode ------------\n") catch unreachable;
+        self.bytecode.dump(self.writer) catch unreachable;
+        self.writer.writeAll("----------------------------------\n") catch unreachable;
     }
     while (self.running and self.program_counter < self.bytecode.instructions.len) {
         const instruction = try self.fetchInstruction();
@@ -424,7 +427,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
+pub fn report(self: *Self, error_writer: std.io.AnyWriter) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }

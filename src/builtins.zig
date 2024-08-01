@@ -6,10 +6,12 @@ const ast = @import("../parser/ast.zig");
 const Value = @import("compiler/value.zig").Value;
 const Vm = @import("vm/Vm.zig");
 
+const wasm = @import("wasm.zig");
+
 pub fn rand(_: *Vm, args: []const Value) !?Value {
     var prng = std.rand.DefaultPrng.init(blk: {
-        var seed: u64 = undefined;
-        std.posix.getrandom(std.mem.asBytes(&seed)) catch return error.GetRandomFailed;
+        const seed: u64 = undefined;
+        // std.posix.getrandom(std.mem.asBytes(&seed)) catch return error.GetRandomFailed;
         break :blk seed;
     });
     const random = prng.random();
@@ -37,10 +39,13 @@ pub fn rand(_: *Vm, args: []const Value) !?Value {
         else => error.InvalidNumberOfArguments,
     };
 }
-
 pub fn print(_: *Vm, args: []const Value) !?Value {
-    const stderr = std.io.getStdErr();
-    var buf = std.io.bufferedWriter(stderr.writer());
+    var under_writer = if (builtin.target.isWasm()) blk: {
+        break :blk wasm.LogWriter{};
+    } else blk: {
+        break :blk std.io.getStdErr().writer();
+    };
+    var buf = std.io.bufferedWriter(under_writer.any());
     const writer = buf.writer();
     for (args) |arg| {
         switch (arg) {
@@ -53,8 +58,12 @@ pub fn print(_: *Vm, args: []const Value) !?Value {
 }
 
 pub fn println(_: *Vm, args: []const Value) !?Value {
-    const stderr = std.io.getStdErr();
-    var buf = std.io.bufferedWriter(stderr.writer());
+    var under_writer = if (builtin.target.isWasm()) blk: {
+        break :blk wasm.LogWriter{};
+    } else blk: {
+        break :blk std.io.getStdErr().writer();
+    };
+    var buf = std.io.bufferedWriter(under_writer.any());
     const writer = buf.writer();
     for (args) |arg| {
         switch (arg) {
@@ -80,6 +89,10 @@ pub fn os(vm: *Vm, args: []const Value) !?Value {
 const MaxBufferSize = 1024;
 /// Prints a given message and then prompts the user for input using stdin.
 pub fn prompt(vm: *Vm, args: []const Value) !?Value {
+    // todo: wasm-based reader
+    if (builtin.target.isWasm()) {
+        return error.UnsupportedBuiltin;
+    }
     const stderr = std.io.getStdErr().writer();
     if (args.len != 1 or args[0] != .string) {
         return null;

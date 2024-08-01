@@ -78,11 +78,12 @@ const Self = @This();
 
 arena: std.heap.ArenaAllocator,
 cursor: utils.Cursor(TokenData),
-stderr: std.fs.File.Writer,
+error_writer: std.io.AnyWriter,
 diagnostics: utils.Diagnostics,
 
 const ParserOptions = struct {
     ally: std.mem.Allocator,
+    error_writer: std.io.AnyWriter,
 };
 
 /// Initializes the parser.
@@ -90,7 +91,7 @@ pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(options.ally),
         .cursor = utils.Cursor(TokenData).init(tokens),
-        .stderr = std.io.getStdErr().writer(),
+        .error_writer = options.error_writer,
         .diagnostics = utils.Diagnostics.init(options.ally),
     };
 }
@@ -113,7 +114,7 @@ fn moveToHeap(self: *Self, value: anytype) ParserError!*@TypeOf(value) {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
+pub fn report(self: *Self, error_writer: std.io.AnyWriter) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
@@ -377,10 +378,14 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
 fn parseForExpression(self: *Self) ParserError!Expression {
     // for (0..10)
     try self.expectCurrentAndAdvance(.left_paren);
-    const expr = switch (self.currentToken()) {
-        .number => try self.parseRange(),
-        inline else => try self.parseExpression(.lowest),
-    };
+    const expr = if (self.peekIs(.inclusive_range) or self.peekIs(.exclusive_range)) range: {
+        if (!self.currentIs(.number) and !self.currentIs(.identifier)) {
+            self.diagnostics.report("expected number or identifier for range but got: {}", .{self.currentToken()});
+            return ParserError.UnexpectedToken;
+        }
+        break :range try self.parseRange();
+    } else try self.parseExpression(.lowest);
+
     switch (expr) {
         .identifier, .list, .range => {},
         inline else => {

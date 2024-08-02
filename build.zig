@@ -103,6 +103,4 @@ pub fn build(b: *std.Build) !void {
     const playground_step = b.step("playground", "Builds the WASM library and runs the playground");
     run_bun.step.dependOn(&playground_install.step);
     playground_step.dependOn(&run_bun.step);
-
-    b.default_step.dependOn(playground_step);
 }

@@ -536,6 +536,12 @@ fn freeValue(self: *Self, value: Value) void {
                 self.freeValue(entry.value_ptr.*);
             }
         },
+        .dict => |dict| {
+            var iterator = dict.iterator();
+            while (iterator.next()) |entry| {
+                self.freeValue(entry.value_ptr.*);
+            }
+        },
         .string => |_| {
             // todo: separate interned strings from reg strings
             // don't free if interned

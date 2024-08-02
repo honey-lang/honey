@@ -20,7 +20,13 @@ function App() {
 
   const old_log = console.log;
   console.log = (message: string) => {
-    old_log(message);
+    // old_log(message);
+    setOutput((prev) => prev + message);
+  };
+
+  const old_error = console.error;
+  console.error = (message: string) => {
+    // old_error(message);
     setOutput((prev) => prev + message);
   };
 

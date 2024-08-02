@@ -76,6 +76,8 @@ const ScopeContext = struct {
     break_statements: std.ArrayList(CompiledInstruction),
     /// The current continue instructions being tracked for the current loop
     continue_statements: std.ArrayList(CompiledInstruction),
+    /// Whether the current statement is an index statement
+    in_index_statement: bool = false,
 
     /// Initializes the scope context
     pub fn init(ally: std.mem.Allocator) ScopeContext {
@@ -673,14 +675,13 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .index => |value| {
             try self.compileExpression(value.lhs.*);
 
+            // this flag will automatically emit `get_index` instrs when compiling the index expression
+            self.scope_context.in_index_statement = true;
+            defer self.scope_context.in_index_statement = false;
+
             // compile identifier to string to prevent VM from trying to resolve it
             // todo: we should clean up the indexing code
-            if (value.index.* == .identifier) {
-                try self.compileExpression(.{ .string = value.index.identifier });
-            } else {
-                try self.compileExpression(value.index.*);
-            }
-            try self.addInstruction(.get_index);
+            try self.compileExpression(value.index.*);
         },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
@@ -705,13 +706,8 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
                 // fetch key and declare it
                 const key = dict.keys[index];
-                // convert identifier to string to prevent VM from trying to resolve it
-                // todo: we should clean up the indexing code
-                if (key == .identifier) {
-                    try self.compileExpression(.{ .string = key.identifier });
-                } else {
-                    try self.compileExpression(key);
-                }
+                const key_index = try self.addConstant(.{ .string = if (key == .identifier) key.identifier else key.string });
+                try self.addInstruction(.{ .@"const" = key_index });
 
                 // compile value after key
                 const value = dict.values[index];
@@ -722,6 +718,13 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .boolean => |value| try self.addInstruction(if (value) .true else .false),
         .null => try self.addInstruction(.null),
         .identifier => |value| {
+            if (self.scope_context.in_index_statement) {
+                const index = try self.addConstant(.{ .string = value });
+                try self.addInstruction(.{ .@"const" = index });
+                try self.addInstruction(.get_index);
+                return;
+            }
+
             if (self.scope_context.resolveLocalOffset(value)) |offset| {
                 try self.addInstruction(.{ .get_local = offset });
             } else {

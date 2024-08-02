@@ -379,9 +379,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                     const index: usize = @intFromFloat(index_value.number);
                     try self.pushOrError(value.list.get(index) orelse .null);
                 },
-                .dict => {
-                    try self.pushOrError(value.dict.get(index_value.string) orelse .null);
-                },
+                .dict => try self.pushOrError(value.dict.get(index_value.string) orelse .null),
                 inline else => {
                     self.diagnostics.report("Expected expression to be a list or dictionary but got {s}", .{value});
                     return VmError.GenericError;

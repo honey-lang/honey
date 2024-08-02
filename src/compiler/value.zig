@@ -14,6 +14,7 @@ pub const Value = union(enum) {
     pub const Void = Value{ .void = {} };
 
     pub const ListMap = std.AutoArrayHashMap(usize, Value);
+    pub const DictMap = std.StringArrayHashMap(Value);
 
     /// `constant` represents an index to a constant in the constant pool.
     /// This constant is a value that is known at compile time.
@@ -32,6 +33,8 @@ pub const Value = union(enum) {
     identifier: []const u8,
     /// `list` represents a list of values
     list: ListMap,
+    /// `dict` represents a dictionary of values
+    dict: DictMap,
 
     /// Calculates the maximum width of the payload in bytes.
     pub inline fn maxWidth() usize {
@@ -78,6 +81,13 @@ pub const Value = union(enum) {
                     if (!value_entry.value_ptr.equal(other_entry.?)) return false;
                 }
 
+                return true;
+            },
+            .dict => |value| {
+                if (other != .dict or value.count() != other.dict.count()) {
+                    return false;
+                }
+                // todo: implement dict comparison
                 return true;
             },
             inline else => false,
@@ -203,6 +213,19 @@ pub const Value = union(enum) {
                     try writer.print("{s}", .{entry.value_ptr});
                 }
                 try writer.writeAll("]");
+            },
+            .dict => |value| {
+                var iterator = value.iterator();
+                try writer.writeAll("{");
+
+                var index: usize = 0;
+                while (iterator.next()) |entry| : (index += 1) {
+                    try writer.print(" {s}: {s}", .{ entry.key_ptr.*, entry.value_ptr });
+                    if (index < value.count() - 1) {
+                        try writer.writeAll(",");
+                    }
+                }
+                try writer.writeAll(" }");
             },
             inline else => try writer.print("{s}", .{@tagName(self)}),
         }

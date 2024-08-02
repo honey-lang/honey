@@ -264,10 +264,19 @@ pub const ListExpression = struct {
     expressions: []const Expression,
 };
 
+/// A dictionary expression is an expression that represents a dictionary of key-value pairs.
+/// For example, `{"a": 1, "b": 2, "c": 3}`
+pub const DictExpression = struct {
+    keys: []const Expression,
+    values: []const Expression,
+};
+
 /// An index expression is a list access operation that takes an expression and an index
 pub const IndexExpression = struct {
+    pub const Kind = enum { bracket, dot };
     lhs: *Expression,
     index: *Expression,
+    kind: Kind,
 };
 
 /// A for expression is a loop expression that iterates over a range of values or a collection.
@@ -320,6 +329,8 @@ pub const Expression = union(enum) {
     range: RangeExpression,
     /// A list expression, such as `[1, 2, 3]` or `["a", 2, "c"]
     list: ListExpression,
+    /// A dictionary expression, such as `{"a": 1, "b": 2, "c": 3}`.
+    dict: DictExpression,
     /// An index expression, such as `list[0]` or `[0, 1, 2, 3][2]
     index: IndexExpression,
     /// An if expression, such as `if (true) { 1 } else { 2 }`.
@@ -357,6 +368,16 @@ pub const Expression = union(enum) {
                     }
                 }
                 try writer.writeAll("]");
+            },
+            .dict => |inner| {
+                try writer.writeAll("{");
+                for (inner.keys, inner.values, 0..) |key, value, index| {
+                    try writer.print("{s}: {s}", .{ key, value });
+                    if (index + 1 < inner.keys.len) {
+                        try writer.writeAll(", ");
+                    }
+                }
+                try writer.writeAll("}");
             },
             .index => |inner| {
                 try writer.print("{s}[{s}]", .{ inner.lhs, inner.index });
@@ -438,8 +459,8 @@ pub fn createForStatement(expr: *Expression, capture: []const u8, body: *Stateme
     return .{ .expression = .{ .expression = .{ .for_expr = .{ .expr = expr, .capture = capture, .body = body } }, .terminated = terminated } };
 }
 
-pub fn createIndexStatement(expr: *Expression, index_expr: *Expression, terminated: bool) Statement {
-    return .{ .expression = .{ .expression = .{ .index = .{ .lhs = expr, .index = index_expr } }, .terminated = terminated } };
+pub fn createIndexStatement(expr: *Expression, index_expr: *Expression, kind: IndexExpression.Kind, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .index = .{ .lhs = expr, .index = index_expr, .kind = kind } }, .terminated = terminated } };
 }
 
 pub fn createCallStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {

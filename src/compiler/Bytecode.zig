@@ -80,9 +80,9 @@ fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytyp
             const const_idx = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {s}", .{self.constants[const_idx]});
         },
-        .list => {
-            const list_size = std.mem.readInt(u16, operands[0..2], .big);
-            try writer.print(" {d}", .{list_size});
+        .list, .dict => {
+            const size = std.mem.readInt(u16, operands[0..2], .big);
+            try writer.print(" {d}", .{size});
         },
         .jump, .jump_if_false, .loop => {
             const instr_idx = std.mem.readInt(u16, operands[0..2], .big);

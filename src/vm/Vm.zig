@@ -233,6 +233,21 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
             try self.pushOrError(.{ .list = list });
         },
+        .dict => {
+            const len = try self.fetchNumber(u16);
+            var dict = Value.DictMap.init(self.allocator());
+
+            for (0..len) |_| {
+                const value = try self.popOrError();
+                const key = try self.popOrError();
+                try dict.put(key.string, value);
+            }
+            try self.pushOrError(.{ .dict = dict });
+        },
+        .declare_key => {
+            const key = try self.fetchConstant();
+            try self.pushOrError(.{ .identifier = key.identifier });
+        },
         // constant value instructions
         .true => try self.pushOrError(Value.True),
         .false => try self.pushOrError(Value.False),
@@ -349,41 +364,59 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .get_index => {
             const index_value = try self.popOrError();
-            if (index_value != .number) {
-                self.diagnostics.report("Expected index to be a number but got {s}", .{index_value});
-                return VmError.InvalidListKey;
-            }
-            if (@floor(index_value.number) != index_value.number) {
-                self.diagnostics.report("Expected index to be an integer but got {s}", .{index_value});
-                return VmError.GenericError;
-            }
+            const value = try self.popOrError();
 
-            const list_value = try self.popOrError();
-            if (list_value != .list) {
-                self.diagnostics.report("Expected expression to be a list but got {s}", .{list_value});
-                return VmError.GenericError;
+            switch (value) {
+                .list => {
+                    if (index_value != .number) {
+                        self.diagnostics.report("Expected index to be a number but got {s}", .{index_value});
+                        return VmError.InvalidListKey;
+                    }
+                    if (@floor(index_value.number) != index_value.number) {
+                        self.diagnostics.report("Expected index to be an integer but got {s}", .{index_value});
+                        return VmError.GenericError;
+                    }
+                    const index: usize = @intFromFloat(index_value.number);
+                    try self.pushOrError(value.list.get(index) orelse .null);
+                },
+                .dict => {
+                    try self.pushOrError(value.dict.get(index_value.string) orelse .null);
+                },
+                inline else => {
+                    self.diagnostics.report("Expected expression to be a list or dictionary but got {s}", .{value});
+                    return VmError.GenericError;
+                },
             }
-
-            const index: usize = @intFromFloat(index_value.number);
-            try self.pushOrError(list_value.list.get(index) orelse .null);
         },
         .set_index => {
             const new_value = try self.popOrError();
             // fetch list, fetch index, update at index with new expression
             const index_value = try self.popOrError();
-            if (index_value != .number) {
-                self.diagnostics.report("Expected list key to be number but got {s}", .{index_value});
-                return VmError.InvalidListKey;
-            }
-            const index: usize = @intFromFloat(index_value.number);
 
-            var list_value = try self.popOrError();
-            if (list_value != .list) {
-                self.diagnostics.report("Expected list but got {s}", .{index_value});
-                return VmError.GenericError;
+            var value = try self.popOrError();
+            switch (value) {
+                .list => {
+                    if (index_value != .number) {
+                        self.diagnostics.report("Expected list key to be number but got {s}", .{index_value});
+                        return VmError.InvalidListKey;
+                    }
+                    const index: usize = @intFromFloat(index_value.number);
+                    try value.list.put(index, new_value);
+                },
+                .dict => {
+                    if (index_value != .string) {
+                        self.diagnostics.report("Expected dictionary key to be string but got {s}", .{index_value});
+                        return VmError.GenericError;
+                    }
+                    try value.dict.put(index_value.string, new_value);
+                },
+                inline else => {
+                    self.diagnostics.report("Expected list or dictionary but got {s}", .{value});
+                    return VmError.GenericError;
+                },
             }
-            try list_value.list.put(index, new_value);
-            try self.pushOrError(list_value);
+
+            try self.pushOrError(value);
         },
         .call_builtin => {
             const builtin = try self.fetchConstant();

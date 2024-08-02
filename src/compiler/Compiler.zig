@@ -364,7 +364,13 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                     // get list
                     try self.addInstruction(.{ .get_local = offset });
                     // compile index & fetch
-                    try self.compileExpression(index_expr.index.*);
+                    // resolve identifier to string during compilation to prevent VM from trying to resolve it
+                    // todo: we should clean up the indexing code
+                    if (index_expr.index.* == .identifier) {
+                        try self.compileExpression(.{ .string = index_expr.index.identifier });
+                    } else {
+                        try self.compileExpression(index_expr.index.*);
+                    }
 
                     try self.compileExpression(inner.rhs);
                     try self.addInstruction(.set_index);
@@ -373,8 +379,13 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                     const index = try self.addConstant(.{ .identifier = index_identifier });
                     try self.addInstruction(.{ .get_global = index });
                     // compile index & fetch
-                    try self.compileExpression(index_expr.index.*);
-
+                    // resolve identifier to string during compilation to prevent VM from trying to resolve it
+                    // todo: we should clean up the indexing code
+                    if (index_expr.index.* == .identifier) {
+                        try self.compileExpression(.{ .string = index_expr.index.identifier });
+                    } else {
+                        try self.compileExpression(index_expr.index.*);
+                    }
                     try self.compileExpression(inner.rhs);
                     try self.addInstruction(.set_index);
                     try self.addInstruction(.{ .set_global = index });
@@ -661,7 +672,14 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         },
         .index => |value| {
             try self.compileExpression(value.lhs.*);
-            try self.compileExpression(value.index.*);
+
+            // compile identifier to string to prevent VM from trying to resolve it
+            // todo: we should clean up the indexing code
+            if (value.index.* == .identifier) {
+                try self.compileExpression(.{ .string = value.index.identifier });
+            } else {
+                try self.compileExpression(value.index.*);
+            }
             try self.addInstruction(.get_index);
         },
         .number => |value| {
@@ -677,6 +695,29 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                 try self.compileExpression(expr);
             }
             try self.addInstruction(.{ .list = @intCast(value.expressions.len) });
+        },
+        .dict => |dict| {
+            // compile the dictionary in reverse order so we can pop in the correct order
+            var index: usize = dict.keys.len;
+            while (index > 0) {
+                // we decrement before accessing to avoid underflows
+                index -= 1;
+
+                // fetch key and declare it
+                const key = dict.keys[index];
+                // convert identifier to string to prevent VM from trying to resolve it
+                // todo: we should clean up the indexing code
+                if (key == .identifier) {
+                    try self.compileExpression(.{ .string = key.identifier });
+                } else {
+                    try self.compileExpression(key);
+                }
+
+                // compile value after key
+                const value = dict.values[index];
+                try self.compileExpression(value);
+            }
+            try self.addInstruction(.{ .dict = @intCast(dict.keys.len) });
         },
         .boolean => |value| try self.addInstruction(if (value) .true else .false),
         .null => try self.addInstruction(.null),

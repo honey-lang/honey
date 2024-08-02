@@ -1,0 +1,10 @@
+let dict = { i: 0 };
+
+for (0...10) |i| {
+    dict.i = i;
+}
+
+dict.new_key = 5;
+
+@println("Dict: ", dict);
+@println("Dict.nonexistent: ", dict.nonexistent);

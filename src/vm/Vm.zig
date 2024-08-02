@@ -409,10 +409,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.diagnostics.report("Builtin not found: @{s}", .{builtin.identifier});
                 return VmError.GenericError;
             };
-            const output = run_func(self, args) catch |err| {
-                self.diagnostics.report("Failed to run builtin function: {any}", .{err});
-                return VmError.GenericError;
-            };
+            const output = run_func(self, args) catch return VmError.GenericError;
             try self.pushOrError(if (output) |value| value else Value.Void);
         },
         // inline else => {

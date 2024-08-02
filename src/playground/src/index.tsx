@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { MonacoEditor } from "./editor";
 import { runHoney } from "./module";
+import { createShortcut } from "@solid-primitives/keyboard";
 const root = document.getElementById("app");
 
 const DefaultCode = `
@@ -23,6 +24,18 @@ function App() {
     setOutput((prev) => prev + message);
   };
 
+  const run = () => {
+    setOutput("");
+    const output = runHoney(input());
+    if (output === "void") {
+      return;
+    }
+    console.log(output);
+  };
+
+  // instinctive save shortcut should run the code
+  createShortcut(["Control", "S"], run, { preventDefault: true, requireReset: false });
+
   return (
     <div class="w-screen h-screen flex flex-col items-center gap-4">
       <div class="flex flex-col items-center p-4">
@@ -37,14 +50,7 @@ function App() {
         }}/>
         <button
           class="btn btn-primary absolute bottom-2 right-6"
-          onClick={() => {
-            setOutput("");
-            const output = runHoney(input());
-            if (output === "void") {
-              return;
-            }
-            console.log(output);
-          }}
+          onClick={run}
         >
           Run
         </button>

@@ -101,7 +101,7 @@ pub fn build(b: *std.Build) !void {
     const run_bun = b.addSystemCommand(&.{ "bun", "run", "--cwd", "./src/playground", "dev" });
 
     const playground_step = b.step("playground", "Builds the WASM library and runs the playground");
-    playground_step.dependOn(&playground_install.step);
+    run_bun.step.dependOn(&playground_install.step);
     playground_step.dependOn(&run_bun.step);
 
     b.default_step.dependOn(playground_step);

@@ -11,7 +11,7 @@ zig build -Doptimize=ReleaseFast
 
 ### accumulator
 Like JavaScript, honey supports `let` and `const` bindings. It also supports the continue expression (`i += 1` in this case) from Zig.
-```js
+```zig
 
 const ITERATIONS = 100;
 

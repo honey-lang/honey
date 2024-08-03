@@ -43,4 +43,3 @@
 | `get_index`     | 0x73   | void     |
 | `set_member`    | 0x74   | void     |
 | `get_member`    | 0x75   | void     |
-| `declare_key`   | 0x80   | u16      |

@@ -80,8 +80,6 @@ pub const Opcode = enum(u8) {
     set_member = 0x74,
     /// The `get_member` opcode is used to get the value of a member in a class/dictionary.
     get_member = 0x75,
-    /// The `declare_key` opcode is used to declare a key in a dictionary.
-    declare_key = 0x80,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -165,7 +163,6 @@ pub const Instruction = union(Opcode) {
     get_index: void,
     set_member: void,
     get_member: void,
-    declare_key: u16,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

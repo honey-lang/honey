@@ -242,10 +242,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
             try self.pushOrError(.{ .dict = dict });
         },
-        .declare_key => {
-            const key = try self.fetchConstant();
-            try self.pushOrError(.{ .identifier = key.identifier });
-        },
         // constant value instructions
         .true => try self.pushOrError(Value.True),
         .false => try self.pushOrError(Value.False),

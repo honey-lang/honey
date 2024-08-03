@@ -76,6 +76,10 @@ pub const Opcode = enum(u8) {
     set_index = 0x72,
     /// The `get_index` opcode is used to get the value of a list.
     get_index = 0x73,
+    /// The `set_member` opcode is used to set the value of a member in a class/dictionary.
+    set_member = 0x74,
+    /// The `get_member` opcode is used to get the value of a member in a class/dictionary.
+    get_member = 0x75,
     /// The `declare_key` opcode is used to declare a key in a dictionary.
     declare_key = 0x80,
 
@@ -159,6 +163,8 @@ pub const Instruction = union(Opcode) {
     get_local: u16,
     set_index: void,
     get_index: void,
+    set_member: void,
+    get_member: void,
     declare_key: u16,
 
     pub fn opcode(self: Instruction) Opcode {

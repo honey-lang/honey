@@ -204,8 +204,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     //     try self.collectGarbage();
     // }
 
-    // self.stack.dump();
-
     switch (instruction) {
         .@"return" => {
             // todo: handle return values from functions
@@ -391,8 +389,8 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             // fetch list, fetch index, update at index with new expression
             const index_value = try self.popOrError();
 
-            var value = try self.popOrError();
-            switch (value) {
+            var value = self.stack.peekPtr() catch unreachable;
+            switch (value.*) {
                 .list => {
                     if (index_value != .number) {
                         self.diagnostics.report("Expected list key to be number but got {s}", .{index_value});
@@ -413,8 +411,20 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                     return VmError.GenericError;
                 },
             }
+        },
+        .set_member => {
+            const new_value = try self.popOrError();
+            // fetch list, fetch index, update at index with new expression
+            const index_value = try self.popOrError();
 
-            try self.pushOrError(value);
+            var value = self.stack.peekPtr() catch unreachable;
+            try value.dict.put(index_value.string, new_value);
+        },
+        .get_member => {
+            const index_value = try self.popOrError();
+            const value = try self.popOrError();
+
+            try self.pushOrError(value.dict.get(index_value.string) orelse .null);
         },
         .call_builtin => {
             const builtin = try self.fetchConstant();

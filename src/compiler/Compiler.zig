@@ -76,8 +76,6 @@ const ScopeContext = struct {
     break_statements: std.ArrayList(CompiledInstruction),
     /// The current continue instructions being tracked for the current loop
     continue_statements: std.ArrayList(CompiledInstruction),
-    /// Whether the current statement is an index statement
-    in_dot_index: bool = false,
 
     /// Initializes the scope context
     pub fn init(ally: std.mem.Allocator) ScopeContext {
@@ -352,10 +350,48 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             _ = try self.scope_context.addLocal(inner.name, inner.kind == .@"const");
             try self.compileExpression(inner.expression);
         },
-        .assignment => |inner| {
-            // todo: find a way to reduce code duplication
-            if (inner.lhs == .index) {
-                const index_expr = inner.lhs.index;
+        .assignment => |inner| switch (inner.lhs) {
+            .identifier => |name| {
+                if (self.scope_context.resolveLocalOffset(name)) |offset| {
+                    // fetch local
+                    const local = self.scope_context.getLocal(offset) catch |err| {
+                        self.diagnostics.report("Local variable out of bounds: {s}", .{name});
+                        return err;
+                    };
+
+                    // if local is a constant, error out
+                    if (local.is_const) {
+                        self.diagnostics.report("Cannot reassign constant variable: {s}", .{name});
+                        return Error.VariableAlreadyExists;
+                    }
+
+                    if (!inner.isSimple()) {
+                        try self.addInstruction(.{ .get_local = offset });
+                        try self.compileExpression(inner.rhs);
+
+                        const instr = try self.resolveAssignToInstr(inner.type);
+                        try self.addInstruction(instr);
+                    } else {
+                        try self.compileExpression(inner.rhs);
+                    }
+
+                    try self.addInstruction(.{ .set_local = offset });
+                } else {
+                    const index = try self.addConstant(.{ .identifier = name });
+                    if (!inner.isSimple()) {
+                        try self.addInstruction(.{ .get_global = index });
+                        try self.compileExpression(inner.rhs);
+
+                        const instr = try self.resolveAssignToInstr(inner.type);
+                        try self.addInstruction(instr);
+                    } else {
+                        try self.compileExpression(inner.rhs);
+                    }
+
+                    try self.addInstruction(.{ .set_global = index });
+                }
+            },
+            .index => |index_expr| {
                 if (index_expr.lhs.* != .identifier) {
                     self.diagnostics.report("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
                     return Error.UnexpectedType;
@@ -366,8 +402,6 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                     // get list
                     try self.addInstruction(.{ .get_local = offset });
                     // compile index & fetch
-                    // resolve identifier to string during compilation to prevent VM from trying to resolve it
-                    // todo: we should clean up the indexing code
                     try self.compileExpression(index_expr.index.*);
 
                     try self.compileExpression(inner.rhs);
@@ -377,55 +411,21 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                     const index = try self.addConstant(.{ .identifier = index_identifier });
                     try self.addInstruction(.{ .get_global = index });
                     // compile index & fetch
-                    // resolve identifier to string during compilation to prevent VM from trying to resolve it
-                    // todo: we should clean up the indexing code
                     try self.compileExpression(index_expr.index.*);
+
                     try self.compileExpression(inner.rhs);
                     try self.addInstruction(.set_index);
                     try self.addInstruction(.{ .set_global = index });
                 }
-                return;
-            }
-
-            const name = inner.lhs.identifier;
-            if (self.scope_context.resolveLocalOffset(name)) |offset| {
-                // fetch local
-                const local = self.scope_context.getLocal(offset) catch |err| {
-                    self.diagnostics.report("Local variable out of bounds: {s}", .{name});
-                    return err;
-                };
-
-                // if local is a constant, error out
-                if (local.is_const) {
-                    self.diagnostics.report("Cannot reassign constant variable: {s}", .{name});
-                    return Error.VariableAlreadyExists;
-                }
-
-                if (!inner.isSimple()) {
-                    try self.addInstruction(.{ .get_local = offset });
-                    try self.compileExpression(inner.rhs);
-
-                    const instr = try self.resolveAssignToInstr(inner.type);
-                    try self.addInstruction(instr);
-                } else {
-                    try self.compileExpression(inner.rhs);
-                }
-
-                try self.addInstruction(.{ .set_local = offset });
-            } else {
-                const index = try self.addConstant(.{ .identifier = name });
-                if (!inner.isSimple()) {
-                    try self.addInstruction(.{ .get_global = index });
-                    try self.compileExpression(inner.rhs);
-
-                    const instr = try self.resolveAssignToInstr(inner.type);
-                    try self.addInstruction(instr);
-                } else {
-                    try self.compileExpression(inner.rhs);
-                }
-
-                try self.addInstruction(.{ .set_global = index });
-            }
+            },
+            .member => |member| {
+                try self.compileExpression(member.lhs.*);
+                const member_index = try self.addConstant(.{ .string = member.member });
+                try self.addInstruction(.{ .@"const" = member_index });
+                try self.compileExpression(inner.rhs);
+                try self.addInstruction(.set_member);
+            },
+            inline else => unreachable,
         },
         .block => |inner| {
             // compile the block's statements & handle the scope depth
@@ -666,20 +666,18 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         },
         .index => |value| {
             try self.compileExpression(value.lhs.*);
+            try self.compileExpression(value.index.*);
+            try self.addInstruction(.get_index);
+        },
+        .member => |value| {
+            try self.compileExpression(value.lhs.*);
 
-            // if the index is a dot expression, we'll need to compile it as a string to better enable nested indexing
-            if (value.kind == .dot) {
-                // this flag will automatically emit `get_index` instrs when compiling the index expression
-                self.scope_context.in_dot_index = true;
-                defer self.scope_context.in_dot_index = false;
+            // compile identifier to string to prevent VM from trying to resolve it
+            // todo: we should clean up the indexing code
+            const index = try self.addConstant(.{ .string = value.member });
+            try self.addInstruction(.{ .@"const" = index });
 
-                // compile identifier to string to prevent VM from trying to resolve it
-                // todo: we should clean up the indexing code
-                try self.compileExpression(value.index.*);
-            } else {
-                try self.compileExpression(value.index.*);
-                try self.addInstruction(.get_index);
-            }
+            try self.addInstruction(.get_member);
         },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
@@ -716,15 +714,6 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         .boolean => |value| try self.addInstruction(if (value) .true else .false),
         .null => try self.addInstruction(.null),
         .identifier => |value| {
-            if (self.scope_context.in_dot_index) {
-                const index = try self.addConstant(.{ .string = value });
-                try self.addInstruction(.{ .@"const" = index });
-                try self.addInstruction(.get_index);
-                return;
-            }
-
-            std.debug.print("compiling identifier: {s}\n", .{value});
-
             if (self.scope_context.resolveLocalOffset(value)) |offset| {
                 try self.addInstruction(.{ .get_local = offset });
             } else {

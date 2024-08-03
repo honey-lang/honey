@@ -1,12 +1,4 @@
-let dict = { i: 0 };
+let dict = { a: { b: 1 } };
 
-for (0...10) |i| {
-    dict.i = i;
-}
-
-dict.new_key = 5;
-dict.nested = { a: 1, b: 2, c: 3 };
-
-@println("Dict: ", dict);
-@println("Dict.nonexistent: ", dict.nonexistent);
-@println("Dict.nested.a: ", dict.nested.a);
+dict.a.b = 2;
+@println(dict.a.b);

@@ -195,9 +195,10 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
             }
 
             const expression = try self.parseExpression(.lowest);
+
             // try to parse an assignment statement
             // todo: expand expressions to include dot operator (e.g., this.is.a.nested.identifier)
-            if (self.cursor.hasNext() and self.currentToken().isAssignment() and (expression == .index or expression == .identifier)) {
+            if (self.cursor.hasNext() and self.currentToken().isAssignment() and expression.canAssign()) {
                 break :blk try self.parseAssignmentStatement(expression, needs_terminated);
             }
 
@@ -243,7 +244,7 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
 }
 
 fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool) ParserError!Statement {
-    if (lhs != .identifier and lhs != .index) {
+    if (!lhs.canAssign()) {
         return ParserError.UnexpectedToken;
     }
     const assignment_token_data = try self.readAndAdvance();
@@ -254,6 +255,8 @@ fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool
     if (needs_terminated) {
         try self.expectCurrentAndAdvance(.semicolon);
     }
+
+    // std.debug.print("Assignment: {s} {s} {s}\n", .{ lhs, assignment_token_data.token, rhs });
     return ast.createAssignStatement(lhs, assignment_token_data.token, rhs);
 }
 
@@ -533,7 +536,7 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
     switch (token_data.token) {
         .left_paren => return try self.parseCallExpression(lhs),
         .left_bracket => return try self.parseIndexExpression(lhs),
-        .dot => return try self.parseDotIndexExpression(lhs),
+        .dot => return try self.parseMemberExpression(lhs),
         else => {},
     }
     const operator = Operator.fromTokenData(token_data) catch return ParserError.UnexpectedToken;
@@ -555,11 +558,14 @@ fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
     return .{ .call = .{ .name = expr.identifier, .arguments = arguments } };
 }
 
-/// Parses a dot index expression given the LHS
-fn parseDotIndexExpression(self: *Self, lhs: *Expression) ParserError!Expression {
-    const index = try self.parseExpression(.lowest);
-    const index_ptr = try self.moveToHeap(index);
-    return .{ .index = .{ .lhs = lhs, .index = index_ptr, .kind = .dot } };
+/// Parses a member expression given the LHS
+fn parseMemberExpression(self: *Self, lhs: *Expression) ParserError!Expression {
+    if (!self.currentIs(.identifier)) {
+        self.diagnostics.report("expected identifier but got: {}", .{self.currentToken()});
+        return ParserError.UnexpectedToken;
+    }
+    const member = try self.readAndAdvance();
+    return .{ .member = .{ .lhs = lhs, .member = member.token.identifier } };
 }
 
 /// Parses an index expression given the LHS
@@ -567,7 +573,7 @@ fn parseIndexExpression(self: *Self, lhs: *Expression) ParserError!Expression {
     const index = try self.parseExpression(.lowest);
     const index_ptr = try self.moveToHeap(index);
     try self.expectCurrentAndAdvance(.right_bracket);
-    return .{ .index = .{ .lhs = lhs, .index = index_ptr, .kind = .bracket } };
+    return .{ .index = .{ .lhs = lhs, .index = index_ptr } };
 }
 
 fn parseBuiltinExpression(self: *Self, raw_name: []const u8) ParserError!Expression {
@@ -961,7 +967,7 @@ test "test parsing simple indexing of list expression" {
             var list_expr = ast.Expression{ .identifier = "list" };
             var index_expr = ast.Expression{ .number = 1 };
 
-            const expected = ast.createIndexStatement(&list_expr, &index_expr, .bracket, false);
+            const expected = ast.createIndexStatement(&list_expr, &index_expr, false);
             const statements = try program.statements.toOwnedSlice();
             try std.testing.expectEqualDeep(expected, statements[0]);
         }
@@ -974,20 +980,32 @@ test "test parsing simple indexing of dict expression" {
             var list_expr = ast.Expression{ .identifier = "dict" };
             var index_expr = ast.Expression{ .string = "key" };
 
-            const expected = ast.createIndexStatement(&list_expr, &index_expr, .bracket, false);
+            const expected = ast.createIndexStatement(&list_expr, &index_expr, false);
             const statements = try program.statements.toOwnedSlice();
             try std.testing.expectEqualDeep(expected, statements[0]);
         }
     }.func);
 }
 
-test "test parsing simple dot indexing of dict expression" {
+test "test parsing simple member indexing of dict expression" {
     try parseAndExpect("dict.key", struct {
         pub fn func(program: *Program) anyerror!void {
             var list_expr = ast.Expression{ .identifier = "dict" };
-            var index_expr = ast.Expression{ .identifier = "key" };
 
-            const expected = ast.createIndexStatement(&list_expr, &index_expr, .dot, false);
+            const expected = ast.createMemberStatement(&list_expr, "key", false);
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing nested member indexing of dict expression" {
+    try parseAndExpect("a.b.c", struct {
+        pub fn func(program: *Program) anyerror!void {
+            var a_expr = ast.Expression{ .identifier = "a" };
+            var b_expr = ast.Expression{ .member = .{ .lhs = &a_expr, .member = "b" } };
+
+            const expected = ast.createMemberStatement(&b_expr, "c", false);
             const statements = try program.statements.toOwnedSlice();
             try std.testing.expectEqualDeep(expected, statements[0]);
         }

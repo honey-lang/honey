@@ -208,9 +208,14 @@ pub const Value = union(enum) {
             .identifier => |value| try writer.print("{s}", .{value}),
             .list => |value| {
                 var iterator = value.iterator();
+
+                var index: usize = 0;
                 try writer.writeAll("[");
-                while (iterator.next()) |entry| {
+                while (iterator.next()) |entry| : (index += 1) {
                     try writer.print("{s}", .{entry.value_ptr});
+                    if (index < value.count() - 1) {
+                        try writer.writeAll(", ");
+                    }
                 }
                 try writer.writeAll("]");
             },

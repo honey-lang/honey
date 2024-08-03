@@ -95,11 +95,12 @@ inline fn readStringMap(self: *Self, comptime map: []const TokenStringEntry, fal
 
     inline for (sorted) |entry| {
         const key, const value = entry;
-        const peeked = self.cursor.peekSlice(key.len);
-        if (std.mem.eql(u8, key, peeked)) {
-            // we subtract by one as to not overscan the next character
-            defer self.cursor.advanceAmount(key.len - 1);
-            return value;
+        const peeked = self.cursor.peekSliceOrNull(key.len);
+        if (peeked) |slice| {
+            if (std.mem.eql(u8, key, slice)) {
+                defer self.cursor.advanceAmount(key.len - 1);
+                return value;
+            }
         }
     }
     return fallback;
@@ -322,15 +323,15 @@ test "ensure readStringMap sorts by length" {
     const ally = std.testing.allocator;
     const map = &[_]TokenStringEntry{
         .{ "..", .exclusive_range },
-        .{ "..=", .inclusive_range },
+        .{ "...", .inclusive_range },
     };
-    var lexer_1 = Self.init("..=", ally);
+    var lexer_1 = Self.init("...", ally);
     defer lexer_1.deinit();
     const token_1 = lexer_1.readStringMap(map, .dot);
-    try std.testing.expectEqual(token_1, .inclusive_range);
+    try std.testing.expectEqual(.inclusive_range, token_1);
 
     var lexer_2 = Self.init("..5", ally);
     defer lexer_2.deinit();
     const token_2 = lexer_2.readStringMap(map, .dot);
-    try std.testing.expectEqual(token_2, .exclusive_range);
+    try std.testing.expectEqual(.exclusive_range, token_2);
 }

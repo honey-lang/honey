@@ -264,10 +264,24 @@ pub const ListExpression = struct {
     expressions: []const Expression,
 };
 
+/// A dictionary expression is an expression that represents a dictionary of key-value pairs.
+/// For example, `{"a": 1, "b": 2, "c": 3}`
+pub const DictExpression = struct {
+    keys: []const Expression,
+    values: []const Expression,
+};
+
 /// An index expression is a list access operation that takes an expression and an index
 pub const IndexExpression = struct {
     lhs: *Expression,
     index: *Expression,
+};
+
+/// A member expression is an expression that accesses a member of a class or dictionary.
+/// For example, `foo.bar` is a member expression.
+pub const MemberExpression = struct {
+    lhs: *Expression,
+    member: []const u8,
 };
 
 /// A for expression is a loop expression that iterates over a range of values or a collection.
@@ -320,8 +334,12 @@ pub const Expression = union(enum) {
     range: RangeExpression,
     /// A list expression, such as `[1, 2, 3]` or `["a", 2, "c"]
     list: ListExpression,
+    /// A dictionary expression, such as `{"a": 1, "b": 2, "c": 3}`.
+    dict: DictExpression,
     /// An index expression, such as `list[0]` or `[0, 1, 2, 3][2]
     index: IndexExpression,
+    /// A member expression, such as `foo.bar` or `baz.qux`.
+    member: MemberExpression,
     /// An if expression, such as `if (true) { 1 } else { 2 }`.
     /// TODO: Rename back to @"if" when ZLS fixes the bug with @"" identifiers.
     if_expr: IfExpression,
@@ -337,6 +355,11 @@ pub const Expression = union(enum) {
     callback: CallbackExpression,
     /// A reference to a function, such as `foo` or `bar`. Written as `foo(...)` or `bar(...)`.
     fn_ref: []const u8,
+
+    /// Returns true if the expression can be on the LHS of an assignment.
+    pub fn canAssign(self: Expression) bool {
+        return self == .identifier or self == .index or self == .member;
+    }
 
     pub fn format(self: Expression, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (self) {
@@ -358,8 +381,21 @@ pub const Expression = union(enum) {
                 }
                 try writer.writeAll("]");
             },
+            .dict => |inner| {
+                try writer.writeAll("{");
+                for (inner.keys, inner.values, 0..) |key, value, index| {
+                    try writer.print("{s}: {s}", .{ key, value });
+                    if (index + 1 < inner.keys.len) {
+                        try writer.writeAll(", ");
+                    }
+                }
+                try writer.writeAll("}");
+            },
             .index => |inner| {
                 try writer.print("{s}[{s}]", .{ inner.lhs, inner.index });
+            },
+            .member => |inner| {
+                try writer.print("{s}.{s}", .{ inner.lhs, inner.member });
             },
             .if_expr => |inner| {
                 try writer.writeAll("if (");
@@ -440,6 +476,10 @@ pub fn createForStatement(expr: *Expression, capture: []const u8, body: *Stateme
 
 pub fn createIndexStatement(expr: *Expression, index_expr: *Expression, terminated: bool) Statement {
     return .{ .expression = .{ .expression = .{ .index = .{ .lhs = expr, .index = index_expr } }, .terminated = terminated } };
+}
+
+pub fn createMemberStatement(expr: *Expression, member: []const u8, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .member = .{ .lhs = expr, .member = member } }, .terminated = terminated } };
 }
 
 pub fn createCallStatement(name: []const u8, arguments: []const Expression, terminated: bool) Statement {

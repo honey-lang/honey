@@ -7,15 +7,17 @@ pub const Opcode = enum(u8) {
     @"const" = 0x01,
     /// The `list` opcode is used to create a list from the values on the stack.
     list = 0x02,
+    /// The `dict` opcode is used to create a dictionary from the values on the stack.
+    dict = 0x03,
     /// The `pop` opcode is used to pop a value from the stack.
-    pop = 0x03,
+    pop = 0x04,
     /// The `jump` opcode is used to jump to an instruction.
-    jump = 0x04,
+    jump = 0x05,
     /// The `jump_if_false` opcode is used to jump to an instruction if the top of the stack is false.
     /// The top of the stack is popped.
-    jump_if_false = 0x05,
+    jump_if_false = 0x06,
     /// The `loop` opcode is used to jump back `n` instructions.
-    loop = 0x06,
+    loop = 0x07,
     /// The `true` opcode is used to push a true value onto the stack.
     true = 0x10,
     /// The `false` opcode is used to push a false value onto the stack.
@@ -74,6 +76,12 @@ pub const Opcode = enum(u8) {
     set_index = 0x72,
     /// The `get_index` opcode is used to get the value of a list.
     get_index = 0x73,
+    /// The `set_member` opcode is used to set the value of a member in a class/dictionary.
+    set_member = 0x74,
+    /// The `get_member` opcode is used to get the value of a member in a class/dictionary.
+    get_member = 0x75,
+    /// The `declare_key` opcode is used to declare a key in a dictionary.
+    declare_key = 0x80,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -121,6 +129,7 @@ pub const Instruction = union(Opcode) {
     @"return": void,
     @"const": u16,
     list: u16,
+    dict: u16,
     pop: void,
     jump: u16,
     jump_if_false: u16,
@@ -154,6 +163,9 @@ pub const Instruction = union(Opcode) {
     get_local: u16,
     set_index: void,
     get_index: void,
+    set_member: void,
+    get_member: void,
+    declare_key: u16,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

@@ -130,6 +130,20 @@ pub fn to_string(vm: *Vm, args: []const Value) !?Value {
     return try vm.createString(stream.getWritten());
 }
 
+/// Returns the length of a string, list, or dictionary.
+pub fn len(_: *Vm, args: []const Value) !?Value {
+    if (args.len != 1) {
+        return error.InvalidNumberOfArguments;
+    }
+
+    return switch (args[0]) {
+        .string => |string| .{ .number = @floatFromInt(string.len) },
+        .list => |list| .{ .number = @floatFromInt(list.count()) },
+        .dict => |dict| .{ .number = @floatFromInt(dict.count()) },
+        else => error.InvalidArgument,
+    };
+}
+
 pub fn memory(vm: *Vm, args: []const Value) !?Value {
     if (args.len != 0) {
         return error.InvalidNumberOfArguments;

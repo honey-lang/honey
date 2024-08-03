@@ -23,6 +23,7 @@ pub fn Cursor(comptime T: type) type {
             return self.input[self.index];
         }
 
+        /// Returns true if the cursor can still read values.
         pub fn canRead(self: *Self) bool {
             return self.index < self.input.len;
         }
@@ -89,6 +90,11 @@ pub fn Cursor(comptime T: type) type {
 
         /// Returns a slice of the input from the current position to the given amount.
         pub fn peekSlice(self: *Self, amount: usize) []const T {
+            return self.input[self.index..(self.index + amount)];
+        }
+
+        pub fn peekSliceOrNull(self: *Self, amount: usize) ?[]const T {
+            if (self.index + amount > self.input.len) return null;
             return self.input[self.index..(self.index + amount)];
         }
 

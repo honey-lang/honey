@@ -1,0 +1,4 @@
+let dict = { a: { b: 1 } };
+
+dict.a.b = 2;
+@println(dict.a.b);

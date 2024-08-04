@@ -93,7 +93,7 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
         .dump_bytecode = options.dump_bytecode,
     });
     vm.run() catch |err| {
-        vm.report(options.error_writer);
+        vm.reportErrors(options.error_writer);
         return err;
     };
     return Result(Vm){ .data = vm, .arena = arena };

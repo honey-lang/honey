@@ -18,6 +18,10 @@ pub fn Stack(comptime T: type) type {
             self.data.deinit();
         }
 
+        pub fn size(self: *Self) usize {
+            return self.data.items.len;
+        }
+
         /// Converts the stack index to the actual index in the data structure.
         /// The index is reversed because the stack is a LIFO data structure.
         inline fn resolveIndex(self: *Self, index: usize) Error!usize {
@@ -63,8 +67,16 @@ pub fn Stack(comptime T: type) type {
             return self.data.items[index];
         }
 
+        /// Returns a pointer to the value at the specified index.
+        pub fn getPtr(self: *Self, index: usize) Error!*T {
+            return &self.data.items[index];
+        }
+
         /// Sets the value at the specified index.
         pub fn set(self: *Self, index: usize, value: T) Error!void {
+            if (index >= self.data.items.len) {
+                return error.OutOfBounds;
+            }
             self.data.items[index] = value;
         }
 

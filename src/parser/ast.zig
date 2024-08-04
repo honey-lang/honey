@@ -288,7 +288,7 @@ pub const MemberExpression = struct {
 /// For example, `for(0..10) |i| { doSomething(i); }` is a for expression.
 pub const ForExpression = struct {
     expr: *Expression,
-    capture: []const u8,
+    captures: []const Expression,
     body: *Statement,
 };
 
@@ -470,8 +470,8 @@ pub fn createWhileStatement(condition: *Expression, body: *Statement, post_stmt:
     return .{ .expression = .{ .expression = .{ .while_expr = .{ .condition = condition, .body = body, .post_stmt = post_stmt } }, .terminated = terminated } };
 }
 
-pub fn createForStatement(expr: *Expression, capture: []const u8, body: *Statement, terminated: bool) Statement {
-    return .{ .expression = .{ .expression = .{ .for_expr = .{ .expr = expr, .capture = capture, .body = body } }, .terminated = terminated } };
+pub fn createForStatement(expr: *Expression, captures: []const Expression, body: *Statement, terminated: bool) Statement {
+    return .{ .expression = .{ .expression = .{ .for_expr = .{ .expr = expr, .captures = captures, .body = body } }, .terminated = terminated } };
 }
 
 pub fn createIndexStatement(expr: *Expression, index_expr: *Expression, terminated: bool) Statement {

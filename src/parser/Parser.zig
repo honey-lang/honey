@@ -439,25 +439,17 @@ fn parseForExpression(self: *Self) ParserError!Expression {
         .number => try self.parseRange(),
         inline else => try self.parseExpression(.lowest),
     };
-    switch (expr) {
-        .identifier, .list, .range => {},
-        inline else => {
-            self.diagnostics.report("expected identifier, list, or range but got {s}", .{expr});
-            return ParserError.UnexpectedToken;
-        },
-    }
 
     try self.expectCurrentAndAdvance(.right_paren);
 
     // |i|
-    try self.expectCurrentAndAdvance(.pipe);
-    const capture = try self.parseExpression(.lowest);
-    if (capture != .identifier) {
-        self.diagnostics.report("expected identifier but got: {s}", .{capture});
-        return ParserError.UnexpectedToken;
+    const captures = try self.parseExpressionList(.pipe, .pipe);
+    for (captures) |capture_ptr| {
+        if (capture_ptr != .identifier) {
+            self.diagnostics.report("expected identifier but got: {}", .{capture_ptr});
+            return ParserError.UnexpectedToken;
+        }
     }
-    const capture_ptr = try self.moveToHeap(capture);
-    try self.expectCurrentAndAdvance(.pipe);
     // { ... }
     const body = try self.parseStatement(false) orelse {
         self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
@@ -466,7 +458,7 @@ fn parseForExpression(self: *Self) ParserError!Expression {
 
     return .{ .for_expr = .{
         .expr = try self.moveToHeap(expr),
-        .capture = capture_ptr.identifier,
+        .captures = captures,
         .body = try self.moveToHeap(body),
     } };
 }

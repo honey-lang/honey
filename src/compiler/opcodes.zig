@@ -80,6 +80,18 @@ pub const Opcode = enum(u8) {
     set_member = 0x74,
     /// The `get_member` opcode is used to get the value of a member in a class/dictionary.
     get_member = 0x75,
+    /// The `iterable_begin` opcode is used to get the beginning of an iterable.
+    iterable_begin = 0x80,
+    /// The `iterable_end` opcode is used to get the end of an iterable.
+    iterable_end = 0x81,
+    /// The `iterable_next` opcode is used to get the next value of an iterable.
+    iterable_next = 0x82,
+    /// The `iterable_has_next` opcode is used to check if there is a next value in an iterable.
+    iterable_has_next = 0x83,
+    /// The `iterable_current` opcode is used to get the current value of an iterable.
+    iterable_value = 0x84,
+    /// The `iterable_key` opcode is used to get the key of an iterable.
+    iterable_key = 0x85,
 
     /// Converts the given opcode to a byte.
     pub fn byte(self: Opcode) u8 {
@@ -163,6 +175,12 @@ pub const Instruction = union(Opcode) {
     get_index: void,
     set_member: void,
     get_member: void,
+    iterable_begin: void,
+    iterable_end: void,
+    iterable_next: void,
+    iterable_has_next: void,
+    iterable_value: void,
+    iterable_key: void,
 
     pub fn opcode(self: Instruction) Opcode {
         return std.meta.stringToEnum(Opcode, @tagName(self)) orelse unreachable;

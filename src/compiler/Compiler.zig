@@ -350,10 +350,48 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             _ = try self.scope_context.addLocal(inner.name, inner.kind == .@"const");
             try self.compileExpression(inner.expression);
         },
-        .assignment => |inner| {
-            // todo: find a way to reduce code duplication
-            if (inner.lhs == .index) {
-                const index_expr = inner.lhs.index;
+        .assignment => |inner| switch (inner.lhs) {
+            .identifier => |name| {
+                if (self.scope_context.resolveLocalOffset(name)) |offset| {
+                    // fetch local
+                    const local = self.scope_context.getLocal(offset) catch |err| {
+                        self.diagnostics.report("Local variable out of bounds: {s}", .{name});
+                        return err;
+                    };
+
+                    // if local is a constant, error out
+                    if (local.is_const) {
+                        self.diagnostics.report("Cannot reassign constant variable: {s}", .{name});
+                        return Error.VariableAlreadyExists;
+                    }
+
+                    if (!inner.isSimple()) {
+                        try self.addInstruction(.{ .get_local = offset });
+                        try self.compileExpression(inner.rhs);
+
+                        const instr = try self.resolveAssignToInstr(inner.type);
+                        try self.addInstruction(instr);
+                    } else {
+                        try self.compileExpression(inner.rhs);
+                    }
+
+                    try self.addInstruction(.{ .set_local = offset });
+                } else {
+                    const index = try self.addConstant(.{ .identifier = name });
+                    if (!inner.isSimple()) {
+                        try self.addInstruction(.{ .get_global = index });
+                        try self.compileExpression(inner.rhs);
+
+                        const instr = try self.resolveAssignToInstr(inner.type);
+                        try self.addInstruction(instr);
+                    } else {
+                        try self.compileExpression(inner.rhs);
+                    }
+
+                    try self.addInstruction(.{ .set_global = index });
+                }
+            },
+            .index => |index_expr| {
                 if (index_expr.lhs.* != .identifier) {
                     self.diagnostics.report("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
                     return Error.UnexpectedType;
@@ -379,48 +417,15 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                     try self.addInstruction(.set_index);
                     try self.addInstruction(.{ .set_global = index });
                 }
-                return;
-            }
-
-            const name = inner.lhs.identifier;
-            if (self.scope_context.resolveLocalOffset(name)) |offset| {
-                // fetch local
-                const local = self.scope_context.getLocal(offset) catch |err| {
-                    self.diagnostics.report("Local variable out of bounds: {s}", .{name});
-                    return err;
-                };
-
-                // if local is a constant, error out
-                if (local.is_const) {
-                    self.diagnostics.report("Cannot reassign constant variable: {s}", .{name});
-                    return Error.VariableAlreadyExists;
-                }
-
-                if (!inner.isSimple()) {
-                    try self.addInstruction(.{ .get_local = offset });
-                    try self.compileExpression(inner.rhs);
-
-                    const instr = try self.resolveAssignToInstr(inner.type);
-                    try self.addInstruction(instr);
-                } else {
-                    try self.compileExpression(inner.rhs);
-                }
-
-                try self.addInstruction(.{ .set_local = offset });
-            } else {
-                const index = try self.addConstant(.{ .identifier = name });
-                if (!inner.isSimple()) {
-                    try self.addInstruction(.{ .get_global = index });
-                    try self.compileExpression(inner.rhs);
-
-                    const instr = try self.resolveAssignToInstr(inner.type);
-                    try self.addInstruction(instr);
-                } else {
-                    try self.compileExpression(inner.rhs);
-                }
-
-                try self.addInstruction(.{ .set_global = index });
-            }
+            },
+            .member => |member| {
+                try self.compileExpression(member.lhs.*);
+                const member_index = try self.addConstant(.{ .string = member.member });
+                try self.addInstruction(.{ .@"const" = member_index });
+                try self.compileExpression(inner.rhs);
+                try self.addInstruction(.set_member);
+            },
+            inline else => unreachable,
         },
         .block => |inner| {
             // compile the block's statements & handle the scope depth
@@ -612,57 +617,133 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
         },
         .for_expr => |inner| {
             // todo: list iteration
-            var jif_target: CompiledInstruction = undefined;
-            // the loop should start before the condition
-            const range = inner.expr.range;
+            switch (inner.expr.*) {
+                .range => |range| {
+                    var jif_target: CompiledInstruction = undefined;
+                    // the loop should start before the condition
+                    try self.compileExpression(range.start.*);
 
-            try self.compileExpression(range.start.*);
-            const capture_offset = try self.scope_context.addLocal(inner.capture, false);
+                    // todo: multi-capture
+                    const capture_name = inner.captures[0].identifier;
+                    const capture_offset = try self.scope_context.addLocal(capture_name, false);
 
-            self.scope_context.beginLoop(expression);
-            defer self.scope_context.endLoop();
+                    self.scope_context.beginLoop(expression);
+                    defer self.scope_context.endLoop();
 
-            const loop_start_instr = try self.getLastInstruction();
+                    const loop_start_instr = try self.getLastInstruction();
 
-            try self.compileExpression(range.end.*);
-            try self.addInstruction(.{ .get_local = capture_offset });
-            try self.addInstruction(if (range.inclusive) .gt_eql else .gt);
+                    try self.compileExpression(range.end.*);
+                    try self.addInstruction(.{ .get_local = capture_offset });
+                    try self.addInstruction(if (range.inclusive) .gt_eql else .gt);
 
-            try self.addInstruction(.{ .jump_if_false = MaxOffset });
-            jif_target = try self.getLastInstruction();
+                    try self.addInstruction(.{ .jump_if_false = MaxOffset });
+                    jif_target = try self.getLastInstruction();
 
-            try self.compileStatement(inner.body.*);
+                    try self.compileStatement(inner.body.*);
 
-            const post_loop_expr = try self.getLastInstruction();
+                    const post_loop_expr = try self.getLastInstruction();
 
-            // increment the capture variable
-            try self.addInstruction(.{ .get_local = capture_offset });
-            // todo: stepping?
-            const increment_const = try self.addConstant(.{ .number = 1 });
-            try self.addInstruction(.{ .@"const" = increment_const });
-            // todo: decrementing loops? e.g., 10..0
-            try self.addInstruction(.add);
-            try self.addInstruction(.{ .set_local = capture_offset });
+                    // increment the capture variable
+                    try self.addInstruction(.{ .get_local = capture_offset });
+                    // todo: stepping?
+                    const increment_const = try self.addConstant(.{ .number = 1 });
+                    try self.addInstruction(.{ .@"const" = increment_const });
+                    // todo: decrementing loops? e.g., 10..0
+                    try self.addInstruction(.add);
+                    try self.addInstruction(.{ .set_local = capture_offset });
 
-            const step_instr = try self.getLastInstruction();
+                    const step_instr = try self.getLastInstruction();
 
-            try self.addInstruction(.{ .loop = @intCast(step_instr.nextInstructionIndex() - loop_start_instr.index) });
+                    try self.addInstruction(.{ .loop = @intCast(step_instr.nextInstructionIndex() - loop_start_instr.index) });
 
-            const loop_end_instr = try self.getLastInstruction();
+                    const loop_end_instr = try self.getLastInstruction();
 
-            // remove local after loop is done
-            try self.scope_context.removeLocal(inner.capture);
-            try self.addInstruction(.pop);
-            // todo: only add a void instr if the loop body is empty
-            try self.addInstruction(.void);
+                    // remove local after loop is done
+                    try self.scope_context.removeLocal(capture_name);
+                    try self.addInstruction(.pop);
+                    // todo: only add a void instr if the loop body is empty
+                    try self.addInstruction(.void);
 
-            try self.scope_context.patchLoop(self, post_loop_expr, loop_end_instr);
-            try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_end_instr.index - jif_target.index) });
+                    try self.scope_context.patchLoop(self, post_loop_expr, loop_end_instr);
+                    try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_end_instr.index - jif_target.index) });
+                },
+                inline else => {
+                    // self.diagnostics.report("expression {s} is not iterable", .{inner.expr});
+                    // return Error.UnsupportedStatement;
+                    // compile the expression and iterate over it
+                    var jif_target: CompiledInstruction = undefined;
+
+                    // the loop should start before the condition
+                    try self.compileExpression(inner.expr.*);
+
+                    // todo: multi-captures
+                    // how should we handle multi-captures with dictionaries? (e.g., for (dict_1, dict_2) {})
+                    const capture_value_name = inner.captures[0].identifier;
+                    // const capture_key_name: ?[]const u8 = if (inner.captures.len > 1) inner.captures[1].identifier else null;
+
+                    const capture_value_offset = try self.scope_context.addLocal(capture_value_name, false);
+                    // const capture_key_offset: ?u16 = if (capture_key_name) |name| try self.scope_context.addLocal(
+                    //     name,
+                    //     false,
+                    // ) else null;
+
+                    self.scope_context.beginLoop(expression);
+                    defer self.scope_context.endLoop();
+
+                    try self.addInstruction(.iterable_begin);
+
+                    const loop_start_instr = try self.getLastInstruction();
+
+                    try self.addInstruction(.iterable_has_next);
+                    try self.addInstruction(.{ .jump_if_false = MaxOffset });
+                    jif_target = try self.getLastInstruction();
+
+                    try self.addInstruction(.iterable_value);
+                    try self.addInstruction(.{ .set_local = capture_value_offset });
+
+                    // if (capture_key_offset) |offset| {
+                    //     try self.addInstruction(.iterable_key);
+                    //     try self.addInstruction(.{ .set_local = offset });
+                    // }
+
+                    try self.compileStatement(inner.body.*);
+
+                    const post_loop_expr = try self.getLastInstruction();
+
+                    try self.addInstruction(.iterable_next);
+
+                    try self.addInstruction(.{ .loop = MaxOffset });
+
+                    const loop_target = try self.getLastInstruction();
+
+                    // remove locals after loop is done
+                    try self.scope_context.removeLocal(capture_value_name);
+                    // if (capture_key_name) |name| try self.scope_context.removeLocal(name);
+                    try self.addInstruction(.iterable_end);
+                    try self.addInstruction(.pop);
+                    // todo: only add a void instr if the loop body is empty
+                    try self.addInstruction(.void);
+
+                    try self.scope_context.patchLoop(self, post_loop_expr, loop_target);
+                    try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_target.index - jif_target.index) });
+                    try self.replace(loop_target, .{ .loop = @intCast(loop_target.nextInstructionIndex() - loop_start_instr.nextInstructionIndex()) });
+                },
+            }
         },
         .index => |value| {
             try self.compileExpression(value.lhs.*);
             try self.compileExpression(value.index.*);
             try self.addInstruction(.get_index);
+        },
+        .member => |value| {
+            try self.compileExpression(value.lhs.*);
+
+            // compile identifier to string to prevent VM from trying to resolve it
+            // todo: we should clean up the indexing code
+            const index = try self.addConstant(.{ .string = value.member });
+            try self.addInstruction(.{ .@"const" = index });
+
+            try self.addInstruction(.get_member);
         },
         .number => |value| {
             const index = try self.addConstant(.{ .number = value });
@@ -673,10 +754,30 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.addInstruction(.{ .@"const" = index });
         },
         .list => |value| {
-            for (value.expressions) |expr| {
-                try self.compileExpression(expr);
+            var index: usize = value.expressions.len;
+            while (index > 0) {
+                index -= 1;
+                try self.compileExpression(value.expressions[index]);
             }
             try self.addInstruction(.{ .list = @intCast(value.expressions.len) });
+        },
+        .dict => |dict| {
+            // compile the dictionary in reverse order so we can pop in the correct order
+            var index: usize = dict.keys.len;
+            while (index > 0) {
+                // we decrement before accessing to avoid underflows
+                index -= 1;
+
+                // fetch key and declare it
+                const key = dict.keys[index];
+                const key_index = try self.addConstant(.{ .string = if (key == .identifier) key.identifier else key.string });
+                try self.addInstruction(.{ .@"const" = key_index });
+
+                // compile value after key
+                const value = dict.values[index];
+                try self.compileExpression(value);
+            }
+            try self.addInstruction(.{ .dict = @intCast(dict.keys.len) });
         },
         .boolean => |value| try self.addInstruction(if (value) .true else .false),
         .null => try self.addInstruction(.null),

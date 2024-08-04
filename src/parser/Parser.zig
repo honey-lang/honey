@@ -36,7 +36,7 @@ pub const Precedence = enum {
             .modulo => .modulo,
             .bang => .prefix,
             .left_paren => .call,
-            .left_bracket => .index,
+            .left_bracket, .dot => .index,
             inline else => .lowest,
         };
     }
@@ -175,17 +175,31 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
             }
             break :blk .@"continue";
         },
-        .left_brace => .{ .block = try self.parseBlockStatement() },
         // skip comments
         .comment => blk: {
             self.cursor.advance();
             break :blk null;
         },
         inline else => blk: {
+            // check for block statements before falling through to expression parsing
+            if (self.currentIs(.left_brace)) {
+                // if we encounter a left brace, we should check if it is a block statement or a dictionary
+                const encountered_key = self.peekIs(.identifier) or self.peekIs(.string);
+
+                // check for separator
+                const potential_sep = self.cursor.peekAhead(2);
+                const encountered_sep = potential_sep != null and potential_sep.?.token == .colon;
+                // if we didn't encounter a key or a separator, we should parse a block statement
+                if (!(encountered_key and encountered_sep)) {
+                    break :blk .{ .block = try self.parseBlockStatement() };
+                }
+            }
+
             const expression = try self.parseExpression(.lowest);
+
             // try to parse an assignment statement
             // todo: expand expressions to include dot operator (e.g., this.is.a.nested.identifier)
-            if (self.cursor.hasNext() and self.currentToken().isAssignment() and (expression == .index or expression == .identifier)) {
+            if (self.cursor.hasNext() and self.currentToken().isAssignment() and expression.canAssign()) {
                 break :blk try self.parseAssignmentStatement(expression, needs_terminated);
             }
 
@@ -231,7 +245,7 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
 }
 
 fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool) ParserError!Statement {
-    if (lhs != .identifier and lhs != .index) {
+    if (!lhs.canAssign()) {
         return ParserError.UnexpectedToken;
     }
     const assignment_token_data = try self.readAndAdvance();
@@ -242,6 +256,8 @@ fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool
     if (needs_terminated) {
         try self.expectCurrentAndAdvance(.semicolon);
     }
+
+    // std.debug.print("Assignment: {s} {s} {s}\n", .{ lhs, assignment_token_data.token, rhs });
     return ast.createAssignStatement(lhs, assignment_token_data.token, rhs);
 }
 
@@ -284,6 +300,48 @@ fn parseListExpression(self: *Self) ParserError!Expression {
     self.cursor.rewind() catch return ParserError.UnexpectedEOF;
     const list = try self.parseExpressionList(.left_bracket, .right_bracket);
     return .{ .list = .{ .expressions = list } };
+}
+
+fn parseDictExpression(self: *Self) ParserError!Expression {
+    var keys = std.ArrayList(Expression).init(self.allocator());
+    var values = std.ArrayList(Expression).init(self.allocator());
+    errdefer keys.deinit();
+    errdefer values.deinit();
+
+    // parse as empty dictionary
+    if (self.currentIs(.right_brace)) {
+        self.cursor.advance();
+        return .{ .dict = .{
+            .keys = keys.toOwnedSlice() catch return ParserError.OutOfMemory,
+            .values = values.toOwnedSlice() catch return ParserError.OutOfMemory,
+        } };
+    }
+
+    while (self.cursor.canRead()) {
+        const key = try self.parseExpression(.lowest);
+        if (key != .identifier and key != .string) {
+            self.diagnostics.report("expected identifier or string but got: {}", .{key});
+            return ParserError.UnexpectedToken;
+        }
+        try self.expectCurrentAndAdvance(.colon);
+        const value = try self.parseExpression(.lowest);
+        // if we encounter a comma, we should expect another key-value pair
+        if (self.currentIs(.comma)) {
+            self.cursor.advance();
+        }
+
+        keys.append(key) catch return ParserError.OutOfMemory;
+        values.append(value) catch return ParserError.OutOfMemory;
+
+        if (self.currentIs(.right_brace)) {
+            self.cursor.advance();
+            break;
+        }
+    }
+    return .{ .dict = .{
+        .keys = keys.toOwnedSlice() catch return ParserError.OutOfMemory,
+        .values = values.toOwnedSlice() catch return ParserError.OutOfMemory,
+    } };
 }
 
 fn parseIdentifier(self: *Self) ParserError!Expression {
@@ -397,14 +455,13 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     try self.expectCurrentAndAdvance(.right_paren);
 
     // |i|
-    try self.expectCurrentAndAdvance(.pipe);
-    const capture = try self.parseExpression(.lowest);
-    if (capture != .identifier) {
-        self.diagnostics.report("expected identifier but got: {s}", .{capture});
-        return ParserError.UnexpectedToken;
+    const captures = try self.parseExpressionList(.pipe, .pipe);
+    for (captures) |capture_ptr| {
+        if (capture_ptr != .identifier) {
+            self.diagnostics.report("expected identifier but got: {}", .{capture_ptr});
+            return ParserError.UnexpectedToken;
+        }
     }
-    const capture_ptr = try self.moveToHeap(capture);
-    try self.expectCurrentAndAdvance(.pipe);
     // { ... }
     const body = try self.parseStatement(false) orelse {
         self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
@@ -413,7 +470,7 @@ fn parseForExpression(self: *Self) ParserError!Expression {
 
     return .{ .for_expr = .{
         .expr = try self.moveToHeap(expr),
-        .capture = capture_ptr.identifier,
+        .captures = captures,
         .body = try self.moveToHeap(body),
     } };
 }
@@ -463,6 +520,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
         .@"while" => try self.parseWhileExpression(),
         .@"for" => try self.parseForExpression(),
         .left_bracket => try self.parseListExpression(),
+        .left_brace => try self.parseDictExpression(),
         .builtin => |name| try self.parseBuiltinExpression(name),
         .left_paren => blk: {
             const parsed = try self.parseExpression(.lowest);
@@ -482,6 +540,7 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
     switch (token_data.token) {
         .left_paren => return try self.parseCallExpression(lhs),
         .left_bracket => return try self.parseIndexExpression(lhs),
+        .dot => return try self.parseMemberExpression(lhs),
         else => {},
     }
     const operator = Operator.fromTokenData(token_data) catch return ParserError.UnexpectedToken;
@@ -501,6 +560,16 @@ fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
     self.cursor.rewind() catch unreachable;
     const arguments = try self.parseExpressionList(.left_paren, .right_paren);
     return .{ .call = .{ .name = expr.identifier, .arguments = arguments } };
+}
+
+/// Parses a member expression given the LHS
+fn parseMemberExpression(self: *Self, lhs: *Expression) ParserError!Expression {
+    if (!self.currentIs(.identifier)) {
+        self.diagnostics.report("expected identifier but got: {}", .{self.currentToken()});
+        return ParserError.UnexpectedToken;
+    }
+    const member = try self.readAndAdvance();
+    return .{ .member = .{ .lhs = lhs, .member = member.token.identifier } };
 }
 
 /// Parses an index expression given the LHS
@@ -657,7 +726,8 @@ test "test parsing let statement" {
         pub fn func(program: *Program) anyerror!void {
             const expected = Statement{ .variable = .{
                 .name = "variable",
-                .type = .let,
+                .kind = .let,
+                .type = null,
                 .expression = Expression{ .number = 1.0 },
             } };
             const statements = try program.statements.toOwnedSlice();
@@ -860,13 +930,86 @@ test "test parsing simple list expression" {
     }.func);
 }
 
-test "test parsing simple index expression" {
+test "test parsing simple dict expression" {
+    try parseAndExpect("{ a: 1, b: \"test\", \"c\": false }", struct {
+        pub fn func(program: *Program) anyerror!void {
+            const a_key = ast.Expression{ .identifier = "a" };
+            const b_key = ast.Expression{ .identifier = "b" };
+            const c_key = ast.Expression{ .string = "c" };
+            const keys = [_]ast.Expression{ a_key, b_key, c_key };
+
+            const a_expr = ast.Expression{ .number = 1.0 };
+            const b_expr = ast.Expression{ .string = "test" };
+            const c_expr = ast.Expression{ .boolean = false };
+            const values = [_]ast.Expression{ a_expr, b_expr, c_expr };
+
+            const dict = ast.Expression{ .dict = .{ .keys = &keys, .values = &values } };
+            const expected = ast.createExpressionStatement(dict, false);
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing empty dict expression" {
+    try parseAndExpect("dict = {};", struct {
+        pub fn func(program: *Program) anyerror!void {
+            const dict = ast.Expression{ .dict = .{
+                .keys = &.{},
+                .values = &.{},
+            } };
+
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(dict, statements[0].assignment.rhs);
+        }
+    }.func);
+}
+
+test "test parsing simple indexing of list expression" {
     try parseAndExpect("list[1]", struct {
         pub fn func(program: *Program) anyerror!void {
             var list_expr = ast.Expression{ .identifier = "list" };
             var index_expr = ast.Expression{ .number = 1 };
 
             const expected = ast.createIndexStatement(&list_expr, &index_expr, false);
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing simple indexing of dict expression" {
+    try parseAndExpect("dict[\"key\"]", struct {
+        pub fn func(program: *Program) anyerror!void {
+            var list_expr = ast.Expression{ .identifier = "dict" };
+            var index_expr = ast.Expression{ .string = "key" };
+
+            const expected = ast.createIndexStatement(&list_expr, &index_expr, false);
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing simple member indexing of dict expression" {
+    try parseAndExpect("dict.key", struct {
+        pub fn func(program: *Program) anyerror!void {
+            var list_expr = ast.Expression{ .identifier = "dict" };
+
+            const expected = ast.createMemberStatement(&list_expr, "key", false);
+            const statements = try program.statements.toOwnedSlice();
+            try std.testing.expectEqualDeep(expected, statements[0]);
+        }
+    }.func);
+}
+
+test "test parsing nested member indexing of dict expression" {
+    try parseAndExpect("a.b.c", struct {
+        pub fn func(program: *Program) anyerror!void {
+            var a_expr = ast.Expression{ .identifier = "a" };
+            var b_expr = ast.Expression{ .member = .{ .lhs = &a_expr, .member = "b" } };
+
+            const expected = ast.createMemberStatement(&b_expr, "c", false);
             const statements = try program.statements.toOwnedSlice();
             try std.testing.expectEqualDeep(expected, statements[0]);
         }

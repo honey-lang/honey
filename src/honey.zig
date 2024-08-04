@@ -94,7 +94,7 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
         .writer = std.io.getStdErr().writer().any(),
     });
     vm.run() catch |err| {
-        vm.report(options.error_writer.any());
+        vm.reportErrors(options.error_writer.any());
         return err;
     };
     return Result(Vm){ .data = vm, .arena = arena };

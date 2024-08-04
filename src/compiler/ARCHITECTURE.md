@@ -7,10 +7,11 @@
 | `return`        | 0x00   | void     |
 | `const`         | 0x01   | u16      |
 | `list`          | 0x02   | u16      |
-| `pop`           | 0x03   | void     |
-| `jump`          | 0x04   | u16      |
-| `jump_if_false` | 0x05   | u16      |
-| `loop`          | 0x06   | u16      |
+| `dict`          | 0x03   | u16      |
+| `pop`           | 0x04   | void     |
+| `jump`          | 0x05   | u16      |
+| `jump_if_false` | 0x06   | u16      |
+| `loop`          | 0x07   | u16      |
 | `true`          | 0x10   | void     |
 | `false`         | 0x11   | void     |
 | `null`          | 0x12   | void     |
@@ -40,3 +41,5 @@
 | `get_local`     | 0x71   | u16      |
 | `set_index`     | 0x72   | void     |
 | `get_index`     | 0x73   | void     |
+| `set_member`    | 0x74   | void     |
+| `get_member`    | 0x75   | void     |

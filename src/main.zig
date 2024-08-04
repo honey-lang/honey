@@ -22,7 +22,8 @@ const Header =
 const Options =
     \\  -h, --help                Display this help menu and exit.
     \\  -r, --repl                Start the REPL.
-    \\  -d, --dump-bytecode       Dumps the bytecode before running (only used for the bytecode engine)
+    \\  -b, --dump-bytecode       Dumps the bytecode before running
+    \\  -c, --dump-constants      Dumps the constants before running
     \\  -p, --print-popped        Prints the last popped value after the program runs
     \\  -i, --input  <input>      Evaluate code from the command line.
     \\  <file>                    Evaluate code from a given file.
@@ -80,6 +81,7 @@ pub fn main() !void {
         .allocator = allocator,
         .error_writer = std.io.getStdErr().writer(),
         .dump_bytecode = res.args.@"dump-bytecode" == 1,
+        .dump_constant_pool = res.args.@"dump-constants" == 1,
     });
     defer result.deinit();
 

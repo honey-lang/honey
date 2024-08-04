@@ -98,7 +98,7 @@ pub const Statement = union(enum) {
     expression: ExpressionStatement,
     variable: VariableStatement,
     assignment: AssignmentStatement,
-    @"fn": FunctionDeclaration,
+    func_decl: FunctionDeclaration,
     block: BlockStatement,
     @"return": ReturnStatement,
     @"break": void,
@@ -162,14 +162,21 @@ pub const AssignmentStatement = struct {
 };
 
 pub const FunctionDeclaration = struct {
+    pub const Parameter = struct { identifier: []const u8, type_name: ?[]const u8 = null };
+
     name: []const u8,
-    parameters: []const Expression,
+    parameters: []const Parameter,
     body: BlockStatement,
 
     pub fn format(self: FunctionDeclaration, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("fn {s}(", .{self.name});
         for (self.parameters, 0..) |parameter, index| {
-            try writer.print("{s}", .{parameter});
+            try writer.print("{s}", .{parameter.identifier});
+            // write a type name if we have one
+            if (parameter.type_name) |type_name| {
+                try writer.print(": {s}", .{type_name});
+            }
+            // write a comma if there are more params
             if (index + 1 < self.parameters.len) {
                 try writer.writeAll(", ");
             }
@@ -458,8 +465,8 @@ pub fn createVariableStatement(kind: Token, name: []const u8, @"type": ?[]const 
     return .{ .variable = .{ .kind = kind, .name = name, .type = @"type", .expression = expression } };
 }
 
-pub fn createFunctionStatement(name: []const u8, parameters: []const Expression, body: BlockStatement) Statement {
-    return .{ .@"fn" = .{ .name = name, .parameters = parameters, .body = body } };
+pub fn createFunctionStatement(name: []const u8, parameters: []const FunctionDeclaration.Parameter, body: BlockStatement) Statement {
+    return .{ .func_decl = .{ .name = name, .parameters = parameters, .body = body } };
 }
 
 pub fn createReturnStatement(expression: ?Expression) Statement {

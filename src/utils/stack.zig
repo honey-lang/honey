@@ -50,6 +50,13 @@ pub fn Stack(comptime T: type) type {
             return self.data.items[self.data.items.len - 1];
         }
 
+        pub fn peekPtr(self: *Self) Error!*T {
+            if (self.data.items.len == 0) {
+                return Error.StackEmpty;
+            }
+            return &(self.data.items[self.data.items.len - 1]);
+        }
+
         /// Returns the value at the specified index.
         pub fn get(self: *Self, index: usize) Error!T {
             return self.data.items[index];

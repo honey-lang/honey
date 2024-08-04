@@ -43,6 +43,11 @@ pub fn dump(self: Self, writer: anytype) !void {
     try writer.print("{s}\n", .{self});
 }
 
+/// Dumps the bytecode's constant data into the provided writer
+pub fn dumpConstants(self: Self, writer: anytype) !void {
+    for (self.constants, 0..) |constant, i| try writer.print("{x:0>2} {s}\n", .{ i, constant });
+}
+
 /// Dumps the raw instruction data into the provided writer
 pub fn dumpRaw(self: Self, width: u8, writer: anytype) !void {
     for (self.instructions, 1..) |byte, i| {
@@ -96,7 +101,7 @@ fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytyp
             const stack_slot = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {d}", .{stack_slot});
         },
-        .call_builtin => {
+        .call, .call_builtin => {
             const const_idx = std.mem.readInt(u16, operands[0..2], .big);
             const arg_count = std.mem.readInt(u16, operands[2..4], .big);
 

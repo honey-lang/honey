@@ -8,9 +8,10 @@ const Opcode = opcodes.Opcode;
 const Instruction = opcodes.Instruction;
 const Value = @import("value.zig").Value;
 const Bytecode = @import("Bytecode.zig");
+const Scope = @import("Scope.zig");
 
 /// This represents a compiled instruction that has been added to the bytecode
-const CompiledInstruction = struct {
+pub const CompiledInstruction = struct {
     /// The instruction's opcode
     opcode: Opcode,
     /// The index that the compiled instruction resides at in the bytecode
@@ -25,13 +26,15 @@ const CompiledInstruction = struct {
 /// The maximum offset that can be used in a jump instruction. Used as a placeholder until replaced with the actual offset
 const MaxOffset = std.math.maxInt(u16);
 /// The maximum number of local variables that can be used in a function
-const MaxLocalVariables = std.math.maxInt(u8) + 1;
+pub const MaxLocalVariables = std.math.maxInt(u8) + 1;
 /// The map type used to store global identifiers declared in the program
 const GlobalIdentifierMap = std.StringArrayHashMap(void);
 
 const Self = @This();
 
-const Error = error{
+pub const Error = error{
+    /// Occurs when the current scope accessed doesn't exist/has an invalid index
+    InvalidScope,
     /// Occurs when the compiler encounters an invalid opcode
     InvalidInstruction,
     /// Occurs when an expected opcode isn't matched by the current opcode
@@ -54,168 +57,20 @@ const Error = error{
     UnexpectedType,
 };
 
-const Local = struct {
-    /// The name of the local variable
-    name: []const u8,
-    /// The depth of the scope the local variable was declared in
-    depth: u16,
-    /// Whether the local variable is a constant
-    is_const: bool,
-};
-
-const ScopeContext = struct {
-    const LocalArray = std.BoundedArray(Local, MaxLocalVariables);
-
-    /// The local variables being tracked by the compiler
-    local_variables: LocalArray = .{},
-    /// The depth of the current scope
-    current_depth: u16 = 0,
-    /// The current loop that the compiler is in
-    current_loop: ?ast.Expression = null,
-    /// The current break instructions being tracked for the current loop
-    break_statements: std.ArrayList(CompiledInstruction),
-    /// The current continue instructions being tracked for the current loop
-    continue_statements: std.ArrayList(CompiledInstruction),
-
-    /// Initializes the scope context
-    pub fn init(ally: std.mem.Allocator) ScopeContext {
-        return .{
-            .break_statements = std.ArrayList(CompiledInstruction).init(ally),
-            .continue_statements = std.ArrayList(CompiledInstruction).init(ally),
-        };
-    }
-
-    /// Deinitializes the scope context
-    pub fn deinit(self: *ScopeContext) void {
-        self.break_statements.deinit();
-        self.continue_statements.deinit();
-    }
-
-    /// Begins a new loop
-    pub fn beginLoop(self: *ScopeContext, loop: ast.Expression) void {
-        self.break_statements.clearRetainingCapacity();
-        self.continue_statements.clearRetainingCapacity();
-        self.current_loop = loop;
-    }
-
-    /// Adds a continue statement to the current loop
-    pub fn addBreak(self: *ScopeContext, instr: CompiledInstruction) !void {
-        try self.break_statements.append(instr);
-    }
-
-    /// Adds a continue statement to the current loop
-    pub fn addContinue(self: *ScopeContext, instr: CompiledInstruction) !void {
-        try self.continue_statements.append(instr);
-    }
-
-    /// Patches all break and continue statements with the correct offsets
-    pub fn patchLoop(self: *ScopeContext, compiler: *Self, post_loop_expr: CompiledInstruction, loop_end: CompiledInstruction) !void {
-        for (self.break_statements.items) |instr| {
-            try compiler.replace(instr, .{ .jump = @intCast(loop_end.nextInstructionIndex() - instr.index) });
-        }
-
-        for (self.continue_statements.items) |instr| {
-            try compiler.replace(instr, .{ .jump = @intCast(post_loop_expr.nextInstructionIndex() - instr.nextInstructionIndex()) });
-        }
-    }
-
-    /// Ends the current loop
-    pub fn endLoop(self: *ScopeContext) void {
-        self.break_statements.clearRetainingCapacity();
-        self.continue_statements.clearRetainingCapacity();
-        self.current_loop = null;
-    }
-
-    /// Returns the local variables in the current scope
-    inline fn getLocals(self: *ScopeContext) []Local {
-        return self.local_variables.slice();
-    }
-
-    /// Returns the number of local variables in the current scope
-    inline fn getLocalsCount(self: *ScopeContext) usize {
-        return self.local_variables.len;
-    }
-
-    /// Returns the last local variable in the current scope or null if there are no local variables
-    inline fn popLocal(self: *ScopeContext) ?Local {
-        return self.local_variables.popOrNull();
-    }
-
-    /// Returns a local variable by offset or errors if the index is out of bounds
-    inline fn getLocal(self: *ScopeContext, offset: u16) Error!Local {
-        return self.local_variables.get(@intCast(offset));
-    }
-
-    /// Returns the last local variable
-    /// This will panic or have UB if there are no local variables
-    inline fn getLastLocal(self: *ScopeContext) Local {
-        return self.local_variables.get(self.local_variables.len - 1);
-    }
-
-    /// Returns true if there is a local variable with the given name
-    inline fn hasLocal(self: *ScopeContext, name: []const u8) bool {
-        return self.resolveLocalOffset(name) != null;
-    }
-
-    /// Finds a local variable by name and returns its offset
-    inline fn resolveLocalOffset(self: *ScopeContext, name: []const u8) ?u16 {
-        for (self.getLocals(), 0..) |local, offset| {
-            if (std.mem.eql(u8, local.name, name)) {
-                return @intCast(offset);
-            }
-        }
-        return null;
-    }
-
-    /// Finds a local variable by name and returns it
-    inline fn resolveLocal(self: *ScopeContext, name: []const u8) ?Local {
-        for (self.getLocals()) |local| {
-            if (std.mem.eql(u8, local.name, name)) {
-                return local;
-            }
-        }
-        return null;
-    }
-
-    /// Attempts to add a local variable to the list of local variables and return its index
-    fn addLocal(self: *ScopeContext, name: []const u8, is_const: bool) Error!u16 {
-        self.local_variables.append(Local{
-            .name = name,
-            .depth = self.current_depth,
-            .is_const = is_const,
-        }) catch return Error.OutOfMemory;
-        return self.local_variables.len - 1;
-    }
-
-    /// Attempts to find a local variable by name. If found, it removes it from the list of local variables
-    fn removeLocal(self: *ScopeContext, name: []const u8) Error!void {
-        for (self.getLocals()) |local| {
-            if (std.mem.eql(u8, local.name, name)) {
-                _ = self.local_variables.popOrNull() orelse return Error.LocalOutOfBounds;
-                return;
-            }
-        }
-    }
-};
-
 /// A simple arena allocator used when compiling into bytecode
 arena: std.heap.ArenaAllocator,
 /// The current program being compiled
 program: ast.Program,
 /// The diagnostics used by the compiler
 diagnostics: utils.Diagnostics,
-/// The instructions being generated
-instructions: std.ArrayList(u8),
-/// A list of constant expressions used in the program
-constants: std.ArrayList(Value),
 /// A list of global identifiers declared in the program
 declared_global_identifiers: GlobalIdentifierMap,
-/// The last instruction that was added
-last_compiled_instr: ?CompiledInstruction = null,
-/// The instruction before the last instruction
-penult_compiled_instr: ?CompiledInstruction = null,
+/// The scopes being compiled from the program
+scopes: std.ArrayList(Scope),
+/// The index of the current scope being worked on
+current_scope_index: usize = 0,
 /// Context about the current scope
-scope_context: ScopeContext,
+scope_context: Scope.Context,
 
 /// Initializes the compiler
 pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
@@ -223,10 +78,9 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
         .arena = std.heap.ArenaAllocator.init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .program = program,
-        .instructions = std.ArrayList(u8).init(ally),
-        .constants = std.ArrayList(Value).init(ally),
         .declared_global_identifiers = GlobalIdentifierMap.init(ally),
-        .scope_context = ScopeContext.init(ally),
+        .scopes = std.ArrayList(Scope).init(ally),
+        .scope_context = Scope.Context.init(ally),
     };
 }
 
@@ -234,38 +88,36 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
 pub fn deinit(self: *Self) void {
     self.arena.deinit();
     self.diagnostics.deinit();
-    self.instructions.deinit();
-    self.constants.deinit();
+    for (self.scopes.items) |*scope| scope.deinit();
     self.declared_global_identifiers.deinit();
     self.scope_context.deinit();
 }
 
 /// Adds an operation to the bytecode
-fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
-    const writer = self.instructions.writer();
+pub fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
+    const scope = try self.getCurrentScope();
+    const writer = scope.instructions.writer();
 
-    const index = self.instructions.items.len;
+    const index = scope.instructions.items.len;
     try encode(writer, instruction);
 
-    // set last as penultimate instr
-    self.penult_compiled_instr = self.last_compiled_instr;
-
-    self.last_compiled_instr = CompiledInstruction{
+    try self.setLastInstruction(CompiledInstruction{
         .opcode = std.meta.activeTag(instruction),
         .index = index,
-    };
+    });
 }
 
 /// Replaces the last instruction with a new instruction
 /// The opcodes between the old and new instructions must match
-fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction) Error!void {
+pub fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction) Error!void {
     const new_opcode = std.meta.activeTag(new_instr);
     if (old.opcode != new_opcode) {
         self.diagnostics.report("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
         return error.OpcodeReplaceMismatch;
     }
 
-    var stream = std.io.fixedBufferStream(self.instructions.items);
+    const scope = try self.getCurrentScope();
+    var stream = std.io.fixedBufferStream(scope.instructions.items);
     const prev_index = stream.pos;
     stream.seekTo(old.index) catch return Error.OpcodeReplaceFailure;
     try encode(stream.writer(), new_instr);
@@ -273,7 +125,7 @@ fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction
 }
 
 /// Encodes an instruction into the given writer
-fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
+pub fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
     // size of the opcode + size of the instruction
     const op: Opcode = std.meta.activeTag(instruction);
     op.encode(writer) catch return Error.OpcodeEncodeFailure;
@@ -285,14 +137,50 @@ fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
     }
 }
 
+/// Creates a scope to be used by the compiler
+/// Returns the index of the created scope
+fn createScope(self: *Self) Error!usize {
+    self.scopes.append(Scope.init(self.arena.allocator())) catch return Error.OutOfMemory;
+    return self.scopes.items.len - 1;
+}
+
+/// Creates and enters a new scope for the compiler
+fn enterScope(self: *Self) Error!void {
+    const index = try self.createScope();
+    self.current_scope_index = index;
+}
+
+/// Exits the current scope by decrementing the current scope index
+fn exitScope(self: *Self) Scope {
+    defer self.current_scope_index -= 1;
+    return self.scopes.orderedRemove(self.current_scope_index);
+}
+
+/// Returns the current scope
+fn getCurrentScope(self: *Self) Error!*Scope {
+    if (self.current_scope_index < 0 or self.current_scope_index >= self.scopes.items.len) {
+        return Error.InvalidScope;
+    }
+    return &self.scopes.items[self.current_scope_index];
+}
+
 /// Returns the last instruction or errors if there is none
 fn getLastInstruction(self: *Self) Error!CompiledInstruction {
-    return self.last_compiled_instr orelse Error.InvalidInstruction;
+    const scope = try self.getCurrentScope();
+    return scope.last_compiled_instr orelse Error.InvalidInstruction;
 }
 
 /// Returns the previous instruction before the last instruction or errors if there is none
-fn getPreviousInstruction(self: *Self) Error!CompiledInstruction {
-    return self.penult_compiled_instr orelse Error.InvalidInstruction;
+fn getPenultInstruction(self: *Self) Error!CompiledInstruction {
+    const scope = try self.getCurrentScope();
+    return scope.penult_compiled_instr orelse Error.InvalidInstruction;
+}
+
+/// Sets the last instruction. Has the side effect of setting the penultimate instruction to the last instruction
+fn setLastInstruction(self: *Self, instr: CompiledInstruction) Error!void {
+    var scope = try self.getCurrentScope();
+    scope.penult_compiled_instr = scope.last_compiled_instr;
+    scope.last_compiled_instr = instr;
 }
 
 /// Returns true if there is a global variable/constant declared with the given name
@@ -307,11 +195,16 @@ fn markGlobal(self: *Self, name: []const u8) !void {
 
 /// Compiles the program into bytecode
 pub fn compile(self: *Self) !Bytecode {
+    // creates the initial scope to be used
+    _ = try self.createScope();
     for (self.program.statements.items) |statement| {
         try self.compileStatement(statement);
     }
 
-    return .{ .instructions = self.instructions.items, .constants = self.constants.items };
+    // at the end of compilation, we should be back to the root scope
+    std.debug.assert(self.current_scope_index == 0);
+    const scope = try self.getCurrentScope();
+    return scope.createBytecode();
 }
 
 /// Compiles a statement into bytecode
@@ -461,7 +354,20 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 return Error.UnsupportedStatement;
             }
         },
-        inline else => return Error.UnsupportedStatement,
+        .func_decl => |inner| {
+            const bytecode = bytecode: {
+                try self.enterScope();
+                try self.compileStatement(.{ .block = inner.body });
+                var scope = self.exitScope();
+
+                break :bytecode try scope.createOwnedBytecode();
+            };
+
+            _ = try self.addConstant(.{ .function = Value.Function{
+                .name = inner.name,
+                .instructions = bytecode,
+            } });
+        },
     }
 }
 
@@ -518,14 +424,15 @@ inline fn resolveInfixToInstr(self: *Self, operator: ast.Operator) Error!opcodes
 
 /// Attempts to add a constant to the list of constants and return its index
 fn addConstant(self: *Self, value: Value) Error!u16 {
+    var scope = try self.getCurrentScope();
     // if it already exists, return the index
-    for (self.constants.items, 0..) |current, index| {
+    for (scope.constants.items, 0..) |current, index| {
         if (current.equal(value)) {
             return @intCast(index);
         }
     }
-    self.constants.append(value) catch return Error.OutOfMemory;
-    return @intCast(self.constants.items.len - 1);
+    scope.constants.append(value) catch return Error.OutOfMemory;
+    return @intCast(scope.constants.items.len - 1);
 }
 
 /// Compiles an expression to opcodes
@@ -694,6 +601,16 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                 try self.compileExpression(arg);
             }
             try self.addInstruction(.{ .call_builtin = .{
+                .constant_index = index,
+                .arg_count = @as(u16, @intCast(inner.arguments.len)),
+            } });
+        },
+        .call => |inner| {
+            const index = try self.addConstant(.{ .identifier = inner.name });
+            for (inner.arguments) |arg| {
+                try self.compileExpression(arg);
+            }
+            try self.addInstruction(.{ .call = .{
                 .constant_index = index,
                 .arg_count = @as(u16, @intCast(inner.arguments.len)),
             } });

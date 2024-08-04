@@ -79,6 +79,7 @@ pub const RunOptions = struct {
     allocator: std.mem.Allocator,
     error_writer: std.fs.File.Writer,
     dump_bytecode: bool = false,
+    dump_constant_pool: bool = false,
 };
 
 pub fn run(source: Source, options: RunOptions) !Result(Vm) {
@@ -91,6 +92,7 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
     var arena = std.heap.ArenaAllocator.init(options.allocator);
     var vm = Vm.init(result.data, arena.allocator(), .{
         .dump_bytecode = options.dump_bytecode,
+        .dump_constant_pool = options.dump_constant_pool,
     });
     vm.run() catch |err| {
         vm.report(options.error_writer);

@@ -1,6 +1,5 @@
-const SIZE = 10_000;
-
+const SIZE = 8;
 
 let list = [];
-for (0...SIZE) |i| list[i] = i ** 2;
+for (0...SIZE) |i| list[i] = i;
 for (0...SIZE) |i| @println(i, ": ", list[i]);

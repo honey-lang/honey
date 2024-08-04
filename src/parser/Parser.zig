@@ -249,22 +249,45 @@ fn parseFunctionDeclaration(self: *Self) ParserError!Statement {
     const identifier_data = try self.readAndAdvance();
     const parameters = try self.parseFunctionParameters();
     const body = try self.parseBlockStatement();
-    return .{ .@"fn" = .{
+    return .{ .func_decl = .{
         .name = identifier_data.token.identifier,
         .parameters = parameters,
         .body = body,
     } };
 }
 
-fn parseFunctionParameters(self: *Self) ParserError![]const Expression {
-    const expressions = try self.parseExpressionList(.left_paren, .right_paren);
-    for (expressions) |expr| {
-        if (expr != .identifier) {
-            self.diagnostics.report("expected identifier but got: {}", .{expr});
-            return ParserError.UnexpectedToken;
-        }
+fn parseFunctionParameters(self: *Self) ParserError![]const ast.FunctionDeclaration.Parameter {
+    try self.expectCurrentAndAdvance(.left_paren);
+    var parameters = std.ArrayList(ast.FunctionDeclaration.Parameter).init(self.allocator());
+    // return empty list if we encounter a right paren
+    if (self.currentIs(.right_paren)) {
+        self.cursor.advance();
+        return parameters.toOwnedSlice();
     }
-    return expressions;
+
+    while (self.cursor.canRead()) {
+        const identifier_expr = try self.parseIdentifier();
+        // if the current token is a colon, we should expect a type name next
+        const type_expr = if (self.currentIs(.colon)) type_expr: {
+            self.cursor.advance();
+            break :type_expr try self.parseIdentifier();
+        } else null;
+
+        // append parameter or return an OOM error
+        // no need to try to report to diagnostics because we're already OOM
+        parameters.append(.{
+            .identifier = identifier_expr.identifier,
+            .type_name = if (type_expr) |expr| expr.identifier else null,
+        }) catch return ParserError.OutOfMemory;
+
+        // advance past comma if found
+        if (self.currentIs(.comma)) self.cursor.advance();
+
+        // break out of loop if we find the right paren
+        if (self.currentIs(.right_paren)) break;
+    }
+    try self.expectCurrentAndAdvance(.right_paren);
+    return parameters.toOwnedSlice();
 }
 
 fn parseBlockStatement(self: *Self) ParserError!ast.BlockStatement {

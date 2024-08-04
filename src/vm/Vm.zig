@@ -40,6 +40,9 @@ const VmError = error{
     GenericError,
 };
 
+/// Frames are used to manage the current state of the program when calls to functions are made
+const Frame = struct { function: Value.Function };
+
 /// The list used to keep track of objects in the VM
 const ObjectList = std.SinglyLinkedList(*Value);
 /// The map type used for variables in the VM
@@ -69,6 +72,10 @@ program_counter: usize = 0,
 stack_pointer: usize = 0,
 /// The stack itself
 stack: utils.Stack(Value),
+/// The frame pointer
+frame_pointer: usize = 0,
+/// The stack managing the frames of the program
+frame_stack: utils.Stack(Frame),
 /// Holds the last value popped from the stack
 last_popped: ?Value = null,
 /// The virtual machine options
@@ -78,6 +85,8 @@ options: VmOptions,
 pub const VmOptions = struct {
     /// If enabled, it will dump the bytecode into stderr before running the program
     dump_bytecode: bool = false,
+    /// If enabled, it will dump the embedded constants into stderr before running the program
+    dump_constant_pool: bool = false,
 };
 
 /// Initializes the VM with the needed values
@@ -90,6 +99,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
+        .frame_stack = utils.Stack(Frame).init(ally),
         .options = options,
     };
     self.addBuiltinLibrary(@import("../builtins.zig"));
@@ -99,6 +109,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
 /// Deinitializes the VM
 pub fn deinit(self: *Self) void {
     self.stack.deinit();
+    self.frame_stack.deinit();
     self.diagnostics.deinit();
     self.builtins.deinit();
     self.global_constants.deinit();
@@ -185,6 +196,12 @@ pub fn run(self: *Self) VmError!void {
         const writer = std.io.getStdErr().writer();
         writer.writeAll("------------ Bytecode ------------\n") catch unreachable;
         self.bytecode.dump(writer) catch unreachable;
+        writer.writeAll("----------------------------------\n") catch unreachable;
+    }
+    if (self.options.dump_constant_pool) {
+        const writer = std.io.getStdErr().writer();
+        writer.writeAll("------------ Constant Pool ------------\n") catch unreachable;
+        self.bytecode.dumpConstants(writer) catch unreachable;
         writer.writeAll("----------------------------------\n") catch unreachable;
     }
     while (self.running and self.program_counter < self.bytecode.instructions.len) {
@@ -377,13 +394,33 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
             const index: usize = @intFromFloat(index_value.number);
 
-            var list_value = try self.popOrError();
-            if (list_value != .list) {
-                self.diagnostics.report("Expected list but got {s}", .{index_value});
+            const list_value = self.stack.peekPtr() catch unreachable;
+            if (list_value.* != .list) {
+                self.diagnostics.report("Expected list but got {s}", .{list_value.*});
                 return VmError.GenericError;
             }
             try list_value.list.put(index, new_value);
-            try self.pushOrError(list_value);
+        },
+        .call => {
+            // const function_name = try self.fetchConstant();
+            const arg_count = try self.fetchNumber(u16);
+            var args_list = std.ArrayList(Value).init(self.allocator());
+            for (0..arg_count) |_| {
+                const arg = try self.popOrError();
+                args_list.append(arg) catch |err| {
+                    self.diagnostics.report("Failed to append argument to builtin arguments: {any}", .{err});
+                    return VmError.GenericError;
+                };
+            }
+            const args = args_list.toOwnedSlice() catch |err| {
+                self.diagnostics.report("Failed to convert arguments to owned slice: {any}", .{err});
+                return VmError.GenericError;
+            };
+            defer self.allocator().free(args);
+            std.mem.reverse(Value, args);
+
+            // todo: implement return values
+            try self.pushOrError(Value.Void);
         },
         .call_builtin => {
             const builtin = try self.fetchConstant();
@@ -502,6 +539,8 @@ fn freeValue(self: *Self, value: Value) void {
         .list => |list| {
             var iterator = list.iterator();
             while (iterator.next()) |entry| {
+                // std.debug.print("value: {s}\n", .{entry.value_ptr.*});
+                std.debug.print("current ptrs: key={d}, value={any}\n", .{ entry.key_ptr.*, entry.value_ptr });
                 self.freeValue(entry.value_ptr.*);
             }
         },
@@ -517,9 +556,10 @@ fn freeValue(self: *Self, value: Value) void {
 /// Pops a value from the stack or reports and returns an error
 fn popOrError(self: *Self) VmError!Value {
     // when last popped becomes the penultimate, we will free the memory since we're holding no more references to it
-    if (self.last_popped) |last_popped| {
-        self.freeValue(last_popped);
-    }
+    // todo: lists may be reused when popped, so we can't just attempt to free an entire list
+    // if (self.last_popped) |last_popped| {
+    //     self.freeValue(last_popped);
+    // }
     self.last_popped = self.stack.pop() catch {
         self.diagnostics.report("Failed to pop value from stack: {s}", .{self.bytecode});
         return error.StackUnderflow;

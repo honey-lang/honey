@@ -1,4 +1,6 @@
 const std = @import("std");
+const CompiledInstruction = @import("Compiler.zig").CompiledInstruction;
+const Bytecode = @import("Bytecode.zig");
 
 pub const Value = union(enum) {
     pub const Error = error{
@@ -14,6 +16,10 @@ pub const Value = union(enum) {
     pub const Void = Value{ .void = {} };
 
     pub const ListMap = std.AutoArrayHashMap(usize, Value);
+    pub const Function = struct {
+        name: []const u8,
+        instructions: Bytecode,
+    };
 
     /// `constant` represents an index to a constant in the constant pool.
     /// This constant is a value that is known at compile time.
@@ -32,6 +38,8 @@ pub const Value = union(enum) {
     identifier: []const u8,
     /// `list` represents a list of values
     list: ListMap,
+    /// `function` represents a piece of code that can be called via name with parameters
+    function: Function,
 
     /// Calculates the maximum width of the payload in bytes.
     pub inline fn maxWidth() usize {
@@ -62,6 +70,7 @@ pub const Value = union(enum) {
             .null => other == .null,
             // todo: string hash comparison
             .string => |value| if (other == .string) std.mem.eql(u8, value, other.string) else false,
+            .identifier => |value| if (other == .identifier) std.mem.eql(u8, value, other.identifier) else false,
             .list => |value| {
                 if (other != .list or value.count() != other.list.count()) {
                     return false;
@@ -199,10 +208,16 @@ pub const Value = union(enum) {
             .list => |value| {
                 var iterator = value.iterator();
                 try writer.writeAll("[");
-                while (iterator.next()) |entry| {
+
+                var i: usize = 0;
+                while (iterator.next()) |entry| : (i += 1) {
                     try writer.print("{s}", .{entry.value_ptr});
+                    if (i + 1 < value.count()) try writer.writeAll(", ");
                 }
                 try writer.writeAll("]");
+            },
+            .function => |value| {
+                try writer.print("fn {s} {{ ... }}", .{value.name});
             },
             inline else => try writer.print("{s}", .{@tagName(self)}),
         }

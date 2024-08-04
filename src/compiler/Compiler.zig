@@ -727,7 +727,6 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                     try self.scope_context.patchLoop(self, post_loop_expr, loop_target);
                     try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_target.index - jif_target.index) });
                     try self.replace(loop_target, .{ .loop = @intCast(loop_target.nextInstructionIndex() - loop_start_instr.nextInstructionIndex()) });
-                    std.debug.print("loop target: {d}\n", .{loop_target.nextInstructionIndex() - loop_start_instr.index - 1});
                 },
             }
         },

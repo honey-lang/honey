@@ -69,7 +69,7 @@ pub fn Stack(comptime T: type) type {
 
         /// Returns a pointer to the value at the specified index.
         pub fn getPtr(self: *Self, index: usize) Error!*T {
-            return &self.data.items[index];
+            return &(self.data.items[index]);
         }
 
         /// Sets the value at the specified index.

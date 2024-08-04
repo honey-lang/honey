@@ -672,28 +672,28 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                     // return Error.UnsupportedStatement;
                     // compile the expression and iterate over it
                     var jif_target: CompiledInstruction = undefined;
+
                     // the loop should start before the condition
                     try self.compileExpression(inner.expr.*);
 
                     // todo: multi-captures
                     // how should we handle multi-captures with dictionaries? (e.g., for (dict_1, dict_2) {})
                     const capture_value_name = inner.captures[0].identifier;
-                    const capture_key_name: ?[]const u8 = if (inner.captures.len > 1) inner.captures[1].identifier else null;
-                    _ = capture_key_name; // autofix
+                    // const capture_key_name: ?[]const u8 = if (inner.captures.len > 1) inner.captures[1].identifier else null;
 
                     const capture_value_offset = try self.scope_context.addLocal(capture_value_name, false);
                     // const capture_key_offset: ?u16 = if (capture_key_name) |name| try self.scope_context.addLocal(
                     //     name,
                     //     false,
                     // ) else null;
-                    // _ = capture_key_offset; // autofix
 
                     self.scope_context.beginLoop(expression);
                     defer self.scope_context.endLoop();
 
+                    try self.addInstruction(.iterable_begin);
+
                     const loop_start_instr = try self.getLastInstruction();
 
-                    try self.addInstruction(.iterable_begin);
                     try self.addInstruction(.iterable_has_next);
                     try self.addInstruction(.{ .jump_if_false = MaxOffset });
                     jif_target = try self.getLastInstruction();
@@ -712,11 +712,9 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
                     try self.addInstruction(.iterable_next);
 
-                    const iter_next_instr = try self.getLastInstruction();
+                    try self.addInstruction(.{ .loop = MaxOffset });
 
-                    try self.addInstruction(.{ .loop = @intCast(iter_next_instr.index - loop_start_instr.index) });
-
-                    const loop_end_instr = try self.getLastInstruction();
+                    const loop_target = try self.getLastInstruction();
 
                     // remove locals after loop is done
                     try self.scope_context.removeLocal(capture_value_name);
@@ -726,8 +724,10 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                     // todo: only add a void instr if the loop body is empty
                     try self.addInstruction(.void);
 
-                    try self.scope_context.patchLoop(self, post_loop_expr, loop_end_instr);
-                    try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_end_instr.index - jif_target.index) });
+                    try self.scope_context.patchLoop(self, post_loop_expr, loop_target);
+                    try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_target.index - jif_target.index) });
+                    try self.replace(loop_target, .{ .loop = @intCast(loop_target.nextInstructionIndex() - loop_start_instr.nextInstructionIndex()) });
+                    std.debug.print("loop target: {d}\n", .{loop_target.nextInstructionIndex() - loop_start_instr.index - 1});
                 },
             }
         },

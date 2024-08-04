@@ -341,7 +341,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .loop => {
             const offset = try self.fetchNumber(u16);
-            // std.debug.print("jumping back to {x:0>4} from {x:0>4} ({x:0>4}) \n", .{ self.program_counter - offset, self.program_counter, offset });
             self.program_counter -= offset;
         },
         .declare_const, .declare_var => {
@@ -479,8 +478,11 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             try value.dict.put(index_value.string, new_value);
         },
         .get_member => {
+            // self.stack.dump();
             const index_value = try self.popOrError();
             const value = try self.popOrError();
+
+            // self.stack.dump();
 
             try self.pushOrError(value.dict.get(index_value.string) orelse Value.Null);
         },
@@ -528,10 +530,13 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .iterable_next => {
             var iterator = try self.getActiveIterator();
             iterator.next();
+
+            // std.debug.print("Iterating over {s} at index {d}\n", .{ iterator.iterable, iterator.index });
         },
         .iterable_has_next => {
             var iterator = try self.getActiveIterator();
             try self.pushOrError(nativeBoolToValue(iterator.hasNext()));
+            // self.stack.dump();
         },
         .iterable_value => {
             var iterator = try self.getActiveIterator();

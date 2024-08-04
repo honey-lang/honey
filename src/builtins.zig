@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
-// const Evaluator = @import("evaluator/Evaluator.zig");
 const Value = @import("compiler/value.zig").Value;
 const Vm = @import("vm/Vm.zig");
 

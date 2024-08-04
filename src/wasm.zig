@@ -94,7 +94,7 @@ pub export fn deallocU8(slice: [*]const u8) void {
 }
 
 /// Exposes the version to the WASM module.
-export fn version() [*]const u8 {
+export fn version() [*:0]const u8 {
     return honey.version;
 }
 

@@ -568,7 +568,7 @@ pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn report(self: *Self, error_writer: std.io.AnyWriter) void {
+pub fn reportErrors(self: *Self, error_writer: std.io.AnyWriter) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }

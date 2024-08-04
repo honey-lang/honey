@@ -444,14 +444,6 @@ fn parseForExpression(self: *Self) ParserError!Expression {
         break :range try self.parseRange();
     } else try self.parseExpression(.lowest);
 
-    switch (expr) {
-        .identifier, .list, .range => {},
-        inline else => {
-            self.diagnostics.report("expected identifier, list, or range but got {s}", .{expr});
-            return ParserError.UnexpectedToken;
-        },
-    }
-
     try self.expectCurrentAndAdvance(.right_paren);
 
     // |i|

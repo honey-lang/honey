@@ -20,6 +20,7 @@
     "vite-plugin-solid": "^2.8.2"
   },
   "dependencies": {
+    "@monaco-editor/loader": "^1.4.0",
     "@solid-primitives/keyboard": "^1.2.8",
     "monaco-editor": "^0.50.0",
     "solid-js": "^1.8.11"

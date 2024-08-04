@@ -1,4 +1,5 @@
 const std = @import("std");
+const honey = @import("honey.zig");
 pub const Lexer = @import("lexer/Lexer.zig");
 pub const TokenData = @import("lexer/token.zig").TokenData;
 pub const ast = @import("parser/ast.zig");
@@ -90,6 +91,11 @@ pub export fn allocU8(length: u32) [*]const u8 {
 /// Deallocates a slice of u8 allocated by `allocU8`.
 pub export fn deallocU8(slice: [*]const u8) void {
     defer allocator.free(slice[0..SeedSize]);
+}
+
+/// Exposes the version to the WASM module.
+export fn version() [*]const u8 {
+    return honey.version;
 }
 
 export fn run(source: [*]u8, source_len: usize) usize {

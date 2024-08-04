@@ -88,7 +88,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/wasm.zig"),
         .target = b.resolveTargetQuery(wasm_target),
         .optimize = .ReleaseSmall,
-        .version = .{ .major = 0, .minor = 0, .patch = 1 },
+        .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
     playground_exe.rdynamic = true;
     playground_exe.entry = .disabled;

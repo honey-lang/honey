@@ -40,17 +40,56 @@ pub fn ConsoleWriter(comptime log_func: *const fn (msg: [*]const u8, len: usize)
 }
 
 /// A log function exported by JS to log messages from the VM.
-extern fn honey_log(msg: [*]const u8, len: usize) void;
+extern fn js_log(msg: [*]const u8, len: usize) void;
 /// An error function exported by JS to log errors from the VM.
-extern fn honey_error(msg: [*]const u8, len: usize) void;
+extern fn js_error(msg: [*]const u8, len: usize) void;
+/// A function exported by JS to prompt the user for input.
+extern fn js_prompt(msg: [*]const u8, len: usize) [*:0]u8;
+/// A function exported by JS to generate random bytes.
+extern fn js_random_bytes(len: usize) [*]u8;
 
-pub const LogWriter = ConsoleWriter(honey_log);
-pub const ErrorWriter = ConsoleWriter(honey_error);
+pub const LogWriter = ConsoleWriter(js_log);
+pub const ErrorWriter = ConsoleWriter(js_error);
+
+/// Logs a message using the JS `console.log` function.
+pub fn honeyLog(comptime fmt: []const u8, args: anytype) !void {
+    var log_writer = LogWriter{};
+    try log_writer.any().print(fmt, args);
+}
+
+/// Logs an error message using the JS `console.error` function.
+pub fn honeyError(comptime fmt: []const u8, args: anytype) void {
+    var error_writer = ErrorWriter{};
+    try error_writer.any().print(fmt, args);
+}
+
+/// Prints the given message and then prompts the user for input using JS `prompt`.
+pub fn honeyPrompt(comptime buf_size: usize, comptime fmt: []const u8, args: anytype) ![*:0]const u8 {
+    var buf: [buf_size]u8 = undefined;
+    const fmted = try std.fmt.bufPrint(&buf, fmt, args);
+    return js_prompt(fmted.ptr, fmted.len);
+}
+
+const SeedType = u64;
+const SeedSize = @sizeOf(SeedType);
+
+/// Generates a random seed using the JS `crypto.getRandomValues` function.
+pub fn generateSeed() SeedType {
+    const bytes = js_random_bytes(SeedSize);
+    defer allocator.free(bytes[0..SeedSize]);
+
+    return std.mem.readInt(SeedType, bytes[0..SeedSize], .big);
+}
 
 /// Allocates a slice of u8 for use in JS.
-export fn allocU8(length: u32) [*]const u8 {
+pub export fn allocU8(length: u32) [*]const u8 {
     const slice = allocator.alloc(u8, length) catch @panic("failed to allocate memory");
     return slice.ptr;
+}
+
+/// Deallocates a slice of u8 allocated by `allocU8`.
+pub export fn deallocU8(slice: [*]const u8) void {
+    defer allocator.free(slice[0..SeedSize]);
 }
 
 export fn run(source: [*]u8, source_len: usize) usize {

@@ -252,4 +252,9 @@ pub const TokenData = struct {
     pub fn format(self: TokenData, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("TokenData {{ .token = {s}, .position = {s} }}", .{ self.token, self.position });
     }
+
+    /// Returns a new `TokenData` with the position offset by `value`
+    pub fn offset(self: TokenData, value: isize) TokenData {
+        return .{ .token = self.token, .position = self.position.offset(value) };
+    }
 };

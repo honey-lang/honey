@@ -10,20 +10,25 @@ pub const Span = struct {
         try writer.print("{{ .start = {d}, .end = {d} }}", .{ self.start, self.end });
     }
 
-    pub fn offset(self: Span, value: usize) Span {
-        return .{ .start = self.start + value, .end = self.end + value };
+    inline fn add(base: usize, offset_value: isize) usize {
+        const cast_base: isize = @intCast(base);
+        return @intCast(@addWithOverflow(cast_base, offset_value).@"0");
     }
 
-    pub fn offsetStart(self: Span, value: usize) Span {
-        return .{ .start = self.start + value, .end = self.end };
+    pub fn offset(self: Span, value: isize) Span {
+        return .{ .start = add(self.start, value), .end = add(self.end, value) };
     }
 
-    pub fn offsetEnd(self: Span, value: usize) Span {
-        return .{ .start = self.start, .end = self.end + value };
+    pub fn offsetStart(self: Span, value: isize) Span {
+        return .{ .start = add(self.start, value), .end = self.end };
     }
 
-    pub fn offsetBoth(self: Span, start_offset: usize, end_offset: usize) Span {
-        return .{ .start = self.start + start_offset, .end = self.end + end_offset };
+    pub fn offsetEnd(self: Span, value: isize) Span {
+        return .{ .start = self.start, .end = add(self.end, value) };
+    }
+
+    pub fn offsetBoth(self: Span, start_offset: isize, end_offset: isize) Span {
+        return .{ .start = add(self.start, start_offset), .end = add(self.end, end_offset) };
     }
 };
 

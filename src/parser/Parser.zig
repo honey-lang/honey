@@ -704,11 +704,11 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 /// Throws an error if the current token is not the expected tag.
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected '{s}' but got EOF", .{tag.name()}, self.cursor.previous().?);
+        // offset by one so it doesn't highlight the previous token
+        self.diagnostics.report("expected '{s}' but got EOF", .{tag.name()}, self.cursor.previous().?.offset(1));
         return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
-        // todo: we should
         self.diagnostics.report("expected '{s}' but got '{s}'", .{ tag.name(), self.currentToken() }, self.cursor.current());
         return ParserError.ExpectedCurrentMismatch;
     }
@@ -718,7 +718,8 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
 /// Throws an error if the current token is not the expected tag.
 fn expectPeekAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     const peek = self.cursor.peek() orelse {
-        self.diagnostics.report("expected token '{s}' but got EOF", .{tag.name()}, self.cursor.current());
+        // offset by one so it doesn't highlight the current token
+        self.diagnostics.report("expected token '{s}' but got EOF", .{tag.name()}, self.cursor.current().offset(1));
         return ParserError.UnexpectedEOF;
     };
     if (!self.peekIs(tag)) {

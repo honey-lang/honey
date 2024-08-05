@@ -525,7 +525,7 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     try self.expectCurrentAndAdvance(.left_paren);
     const expr = if (self.peekIs(.inclusive_range) or self.peekIs(.exclusive_range)) range: {
         if (!self.currentIs(.number) and !self.currentIs(.identifier)) {
-            self.diagnostics.report("expected number or identifier for range but got: {}", .{self.currentToken()});
+            self.diagnostics.report("expected number or identifier for range but got: {}", .{self.currentToken()}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
         break :range try self.parseRange();

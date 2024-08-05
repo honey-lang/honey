@@ -116,7 +116,8 @@ export fn run(source: [*]u8, source_len: usize) usize {
         .writer = log_writer.any(),
     });
     vm.run() catch {
-        vm.diagnostics.dump(error_writer.any());
+        // vm.diagnostics.dump(error_writer.any());
+        // todo: error messages
         return 0;
     };
     defer vm.deinit();
@@ -129,11 +130,9 @@ export fn run(source: [*]u8, source_len: usize) usize {
     return output.len;
 }
 
-fn tokenize(input: []const u8) ![]const TokenData {
-    var lexer = Lexer.init(input, allocator);
-    errdefer lexer.deinit();
-    _ = try lexer.readAll();
-    return try lexer.tokens.toOwnedSlice();
+fn tokenize(input: []const u8) Lexer.Data.Error!Lexer.Data {
+    var lexer = Lexer.init(input, allocator, null);
+    return try lexer.readAll();
 }
 
 const ParseOptions = struct {
@@ -150,7 +149,7 @@ fn parse(source: []const u8, options: ParseOptions) !Result(ast.Program) {
     defer parser.deinit();
 
     const data = parser.parse() catch |err| {
-        parser.report(options.error_writer);
+        parser.report();
         return err;
     };
 
@@ -172,7 +171,7 @@ fn compile(source: []const u8, options: CompileOptions) !Result(Bytecode) {
     var compiler = Compiler.init(arena.allocator(), result.data);
 
     const program = compiler.compile() catch |err| {
-        compiler.diagnostics.dump(options.error_writer);
+        // todo: dump errors
         return err;
     };
 

@@ -139,8 +139,8 @@ writer: std.io.AnyWriter,
 pub const VmOptions = struct {
     /// If enabled, it will dump the bytecode into stderr before running the program
     dump_bytecode: bool = false,
-    /// The writer used for reporting errors
-    error_writer: std.io.AnyWriter,
+    /// The writer used for output and debugging
+    writer: std.io.AnyWriter,
 };
 
 /// Initializes the VM with the needed values
@@ -583,9 +583,9 @@ pub fn reportErrors(self: *Self) void {
     }
     const msg_data = self.diagnostics.errors.items(.msg);
     for (msg_data, 0..) |msg, index| {
-        self.options.error_writer.print(" - {s}", .{msg}) catch unreachable;
+        self.options.writer.print(" - {s}", .{msg}) catch unreachable;
         if (index < msg_data.len) {
-            self.options.error_writer.print("\n", .{}) catch unreachable;
+            self.options.writer.print("\n", .{}) catch unreachable;
         }
     }
 }

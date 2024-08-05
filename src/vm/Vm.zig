@@ -713,7 +713,7 @@ fn popOrError(self: *Self) VmError!Value {
 
     // std.debug.print("Popping value from stack: {s}\n", .{self.stack.peek() catch return VmError.StackUnderflow});
     self.last_popped = self.stack.pop() catch {
-        self.report("Failed to pop value from stack: {s}", .{self.bytecode});
+        self.report("Failed to pop value from stack", .{});
         return error.StackUnderflow;
     };
     // self.stack.dump();

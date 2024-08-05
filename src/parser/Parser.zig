@@ -402,18 +402,22 @@ fn parseDictExpression(self: *Self) ParserError!Expression {
         }
         try self.expectCurrentAndAdvance(.colon);
         const value = try self.parseExpression(.lowest);
-        // if we encounter a comma, we should expect another key-value pair
-        if (self.currentIs(.comma)) {
-            self.cursor.advance();
-        }
 
         keys.append(key) catch return ParserError.OutOfMemory;
         values.append(value) catch return ParserError.OutOfMemory;
+
+        // trailing commas are okay
+        if (self.currentIs(.comma) and self.peekIs(.right_brace)) {
+            self.cursor.advance();
+        }
 
         if (self.currentIs(.right_brace)) {
             self.cursor.advance();
             break;
         }
+
+        // if it's not a right brace, we should expect a comma
+        try self.expectCurrentAndAdvance(.comma);
     }
     return .{ .dict = .{
         .keys = keys.toOwnedSlice() catch return ParserError.OutOfMemory,

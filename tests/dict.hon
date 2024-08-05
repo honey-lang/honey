@@ -18,3 +18,4 @@ const version = language["version"];
 @println("Versions:");
 for (language.versions) |version_data| {
     @println(" - ", version_data.version, ": ", version_data.description, if (version_data.version == version) " (latest)" else "");
+}

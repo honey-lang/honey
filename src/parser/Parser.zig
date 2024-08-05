@@ -126,20 +126,20 @@ pub fn report(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    self.error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
-    self.error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
-    for (self.diagnostics.errors.items, 0..) |msg, index| {
-        self.error_writer.print(" - {s}", .{msg}) catch unreachable;
-        if (index < self.diagnostics.errors.items.len) {
-            self.error_writer.print("\n", .{}) catch unreachable;
+
+    const msg_data = self.diagnostics.errors.items(.msg);
+    const token_data = self.diagnostics.errors.items(.token_data);
+    for (msg_data, token_data, 0..) |msg, token_datum, index| {
+        self.printErrorAtToken(token_datum, msg) catch unreachable;
+        if (index < self.diagnostics.errors.len) {
+            self.error_writer.writeByte('\n') catch unreachable;
         }
     }
-    self.error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
 }
 
 /// Attempts to match a token to the line that it exists on
-pub fn findSpan(self: *Self, token_data: TokenData) ?utils.Span {
-    const result = std.sort.binarySearch(utils.Span, token_data.position, self.line_data, {}, struct {
+pub fn findLineIndex(self: *Self, token_data: TokenData) ?usize {
+    return std.sort.binarySearch(utils.Span, token_data.position, self.line_data, {}, struct {
         pub fn find(_: void, key: utils.Span, mid_item: utils.Span) std.math.Order {
             if (key.start >= mid_item.start and key.end <= mid_item.end) {
                 return .eq;
@@ -149,19 +149,36 @@ pub fn findSpan(self: *Self, token_data: TokenData) ?utils.Span {
             return .gt;
         }
     }.find);
+}
+
+/// Attempts to match a token to the line that it exists on
+pub fn findLine(self: *Self, token_data: TokenData) ?utils.Span {
+    const result = self.findLineIndex(token_data);
     return if (result) |found| self.line_data[found] else null;
 }
 
-pub fn printUnderlinedToken(self: *Self, token_data: TokenData) !void {
-    const span = self.findSpan(token_data) orelse return error.NoSpanFound;
+/// Prints
+pub fn printErrorAtToken(self: *Self, token_data: TokenData, msg: []const u8) !void {
+    const line_index = self.findLineIndex(token_data) orelse return ParserError.UnexpectedToken;
+    const line = self.line_data[line_index];
 
-    const padding = token_data.position.start - span.start;
-    _ = try self.error_writer.write(self.lex_data.getLineBySpan(span));
+    const column_index = token_data.position.start - line.start;
+
+    // we offset the line & column by one for one-indexing
+    try self.error_writer.print("[{s}:{d}:{d}] error: {s}\n", .{ self.lex_data.source_name, line_index + 1, column_index + 1, msg });
+
+    try self.error_writer.writeByte('\t');
+    _ = try self.error_writer.write(self.lex_data.getLineBySpan(line));
     try self.error_writer.writeByte('\n');
+
+    try self.error_writer.writeByte('\t');
     // pad up to the token
-    try self.error_writer.writeByteNTimes(' ', padding);
+    try self.error_writer.writeByteNTimes(' ', column_index);
     // arrows to indicate token highlighted
-    try self.error_writer.writeByteNTimes('^', token_data.position.end - token_data.position.start + 1);
+
+    const token_len = token_data.position.end - token_data.position.start;
+    try self.error_writer.writeByteNTimes('~', token_len + 1);
+    try self.error_writer.writeByte('\n');
 }
 
 /// Parses the tokens into an AST.
@@ -312,7 +329,7 @@ fn parseFunctionParameters(self: *Self) ParserError![]const Expression {
     const expressions = try self.parseExpressionList(.left_paren, .right_paren);
     for (expressions) |expr| {
         if (expr != .identifier) {
-            self.diagnostics.report("expected identifier but got: {}", .{expr});
+            self.diagnostics.report("expected identifier but got: {}", .{expr}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
     }
@@ -355,7 +372,7 @@ fn parseDictExpression(self: *Self) ParserError!Expression {
     while (self.cursor.canRead()) {
         const key = try self.parseExpression(.lowest);
         if (key != .identifier and key != .string) {
-            self.diagnostics.report("expected identifier or string but got: {}", .{key});
+            self.diagnostics.report("expected identifier or string but got: {}", .{key}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
         try self.expectCurrentAndAdvance(.colon);
@@ -382,7 +399,7 @@ fn parseDictExpression(self: *Self) ParserError!Expression {
 fn parseIdentifier(self: *Self) ParserError!Expression {
     const current = try self.readAndAdvance();
     if (current.token != .identifier) {
-        self.diagnostics.report("expected identifier but got: {}", .{current.token});
+        self.diagnostics.report("expected identifier but got: {}", .{current.token}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
     return .{ .identifier = current.token.identifier };
@@ -410,7 +427,7 @@ fn parseIfBody(self: *Self) ParserError!ast.IfExpression.Body {
 
 fn parseIfExpression(self: *Self) ParserError!Expression {
     if (!self.currentIs(.@"if")) {
-        self.diagnostics.report("expected if but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected if but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
 
@@ -457,7 +474,7 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
         try self.expectCurrentAndAdvance(.right_paren);
     }
     const body = try self.parseStatement(false) orelse {
-        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     };
 
@@ -482,13 +499,13 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     const captures = try self.parseExpressionList(.pipe, .pipe);
     for (captures) |capture_ptr| {
         if (capture_ptr != .identifier) {
-            self.diagnostics.report("expected identifier but got: {}", .{capture_ptr});
+            self.diagnostics.report("expected identifier but got: {}", .{capture_ptr}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
     }
     // { ... }
     const body = try self.parseStatement(false) orelse {
-        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     };
 
@@ -507,7 +524,7 @@ fn parseRange(self: *Self) ParserError!Expression {
         .inclusive_range => true,
         .exclusive_range => false,
         inline else => {
-            self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()});
+            self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()}, self.cursor.current());
             return ParserError.UnexpectedToken;
         },
     };
@@ -552,7 +569,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
             break :blk parsed;
         },
         inline else => {
-            self.diagnostics.report("no prefix parse rule for token: {}", .{current.token});
+            self.diagnostics.report("no prefix parse rule for token: {}", .{current.token}, self.cursor.current());
             return ParserError.NoPrefixParseRule;
         },
     };
@@ -577,7 +594,7 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
 /// Parses a call expression using the given identifier as the name.
 fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
     if (expr.* != .identifier) {
-        self.diagnostics.report("expected identifier but got: {}", .{expr});
+        self.diagnostics.report("expected identifier but got: {}", .{expr}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
     // rewind the cursor to make sure we can use `parseExpressionList`
@@ -589,7 +606,7 @@ fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
 /// Parses a member expression given the LHS
 fn parseMemberExpression(self: *Self, lhs: *Expression) ParserError!Expression {
     if (!self.currentIs(.identifier)) {
-        self.diagnostics.report("expected identifier but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected identifier but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
     const member = try self.readAndAdvance();
@@ -662,11 +679,11 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 /// Throws an error if the current token is not the expected tag.
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected current token: {} but got EOF", .{tag});
+        self.diagnostics.report("expected current token: {} but got EOF", .{tag}, self.cursor.current());
         return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
-        self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() });
+        self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() }, self.cursor.current());
         return ParserError.ExpectedCurrentMismatch;
     }
     self.cursor.advance();
@@ -675,11 +692,11 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
 /// Throws an error if the current token is not the expected tag.
 fn expectPeekAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected peek token: {} but got EOF", .{tag});
+        self.diagnostics.report("expected peek token: {} but got EOF", .{tag}, self.cursor.current());
         return ParserError.UnexpectedEOF;
     }
     if (!self.peekIs(tag)) {
-        self.diagnostics.report("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null });
+        self.diagnostics.report("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null }, self.cursor.current());
         return ParserError.ExpectedPeekMismatch;
     }
     self.cursor.advance();
@@ -1061,7 +1078,7 @@ test "test span finding" {
     const true_token_data = data.tokens.items[8];
     try std.testing.expectEqual(.true, true_token_data.token.tag());
 
-    const found_line_data = parser.findSpan(true_token_data);
+    const found_line_data = parser.findLine(true_token_data);
     try std.testing.expect(found_line_data != null);
     try std.testing.expectEqualDeep(utils.Span{ .start = 13, .end = 28 }, found_line_data.?);
 }

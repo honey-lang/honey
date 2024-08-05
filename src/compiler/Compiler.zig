@@ -1,6 +1,7 @@
 const std = @import("std");
 const utils = @import("../utils/utils.zig");
-const Token = @import("../lexer/token.zig").Token;
+const token = @import("../lexer/token.zig");
+const Token = token.Token;
 const ast = @import("../parser/ast.zig");
 const honey = @import("../honey.zig");
 const opcodes = @import("opcodes.zig");
@@ -261,7 +262,7 @@ fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
 fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction) Error!void {
     const new_opcode = std.meta.activeTag(new_instr);
     if (old.opcode != new_opcode) {
-        self.diagnostics.report("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
+        self.report("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
         return error.OpcodeReplaceMismatch;
     }
 
@@ -305,6 +306,16 @@ fn markGlobal(self: *Self, name: []const u8) !void {
     try self.declared_global_identifiers.put(name, {});
 }
 
+const ReportedToken = token.TokenData{
+    .token = .{ .invalid = '\x00' },
+    .position = .{ .start = 0, .end = 0 },
+};
+
+pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
+    // todo: we need to manage tokens in the compiler & vm somehow
+    self.diagnostics.report(fmt, args, ReportedToken);
+}
+
 /// Compiles the program into bytecode
 pub fn compile(self: *Self) !Bytecode {
     for (self.program.statements.items) |statement| {
@@ -326,7 +337,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             // declare a global variable if we're at the top level
             if (self.scope_context.current_depth <= 0) {
                 if (self.hasGlobal(inner.name)) {
-                    self.diagnostics.report("Identifier \"{s}\" already exists in the current scope", .{inner.name});
+                    self.report("Identifier \"{s}\" already exists in the current scope", .{inner.name});
                     return Error.VariableAlreadyExists;
                 }
 
@@ -342,7 +353,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             // if the variable name already exists in the current scope, throw an error
             for (self.scope_context.getLocals()) |local| {
                 if (local.depth <= self.scope_context.current_depth and std.mem.eql(u8, local.name, inner.name)) {
-                    self.diagnostics.report("Variable {s} already exists in the current scope", .{inner.name});
+                    self.report("Variable {s} already exists in the current scope", .{inner.name});
                     return Error.VariableAlreadyExists;
                 }
             }
@@ -355,13 +366,13 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 if (self.scope_context.resolveLocalOffset(name)) |offset| {
                     // fetch local
                     const local = self.scope_context.getLocal(offset) catch |err| {
-                        self.diagnostics.report("Local variable out of bounds: {s}", .{name});
+                        self.report("Local variable out of bounds: {s}", .{name});
                         return err;
                     };
 
                     // if local is a constant, error out
                     if (local.is_const) {
-                        self.diagnostics.report("Cannot reassign constant variable: {s}", .{name});
+                        self.report("Cannot reassign constant variable: {s}", .{name});
                         return Error.VariableAlreadyExists;
                     }
 
@@ -393,7 +404,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             },
             .index => |index_expr| {
                 if (index_expr.lhs.* != .identifier) {
-                    self.diagnostics.report("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
+                    self.report("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
                     return Error.UnexpectedType;
                 }
                 const index_identifier = index_expr.lhs.identifier;
@@ -453,7 +464,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.addInstruction(.{ .jump = MaxOffset });
                 try self.scope_context.addBreak(try self.getLastInstruction());
             } else {
-                self.diagnostics.report("break statement outside of loop", .{});
+                self.report("break statement outside of loop", .{});
                 return Error.UnsupportedStatement;
             }
         },
@@ -462,7 +473,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.addInstruction(.{ .jump = MaxOffset });
                 try self.scope_context.addContinue(try self.getLastInstruction());
             } else {
-                self.diagnostics.report("continue statement outside of loop", .{});
+                self.report("continue statement outside of loop", .{});
                 return Error.UnsupportedStatement;
             }
         },
@@ -470,8 +481,8 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
     }
 }
 
-inline fn resolveAssignToInstr(self: *Self, token: Token) Error!opcodes.Instruction {
-    return switch (token) {
+inline fn resolveAssignToInstr(self: *Self, token_value: Token) Error!opcodes.Instruction {
+    return switch (token_value) {
         .plus_assignment => .add,
         .minus_assignment => .sub,
         .star_assignment => .mul,
@@ -479,7 +490,7 @@ inline fn resolveAssignToInstr(self: *Self, token: Token) Error!opcodes.Instruct
         .modulo_assignment => .mod,
         .doublestar_assignment => .pow,
         inline else => {
-            self.diagnostics.report("Unsupported assignment type: {s}", .{token});
+            self.report("Unsupported assignment type: {s}", .{token_value});
             return error.UnsupportedStatement;
         },
     };
@@ -491,7 +502,7 @@ inline fn resolvePrefixToInstr(self: *Self, operator: ast.Operator) Error!opcode
         .minus => .neg,
         .not => .not,
         inline else => {
-            self.diagnostics.report("unexpected operator: {s}", .{operator});
+            self.report("unexpected operator: {s}", .{operator});
             return error.InvalidInstruction;
         },
     };
@@ -515,7 +526,7 @@ inline fn resolveInfixToInstr(self: *Self, operator: ast.Operator) Error!opcodes
         .@"and" => .@"and",
         .@"or" => .@"or",
         inline else => {
-            self.diagnostics.report("unexpected infix operator: {s}", .{operator});
+            self.report("unexpected infix operator: {s}", .{operator});
             return error.UnexpectedType;
         },
     };
@@ -800,7 +811,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             } });
         },
         inline else => {
-            self.diagnostics.report("Unsupported expression type: {s}", .{expression});
+            self.report("Unsupported expression type: {s}", .{expression});
             return error.UnsupportedExpression;
         },
     }

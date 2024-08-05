@@ -66,7 +66,13 @@ pub fn main() !void {
         if (res.args.input) |input| {
             break :blk .{ .string = input };
         } else if (res.positionals.len > 0) {
-            break :blk .{ .file = try std.fs.cwd().openFile(res.positionals[0], .{}) };
+            const handle = try std.fs.cwd().openFile(res.positionals[0], .{});
+
+            // 1024 chars should be enough for a path for now
+            var path_buf: [1024]u8 = undefined;
+            const full_path = try std.fs.cwd().realpath(res.positionals[0], &path_buf);
+            const file_name = std.fs.path.basename(full_path);
+            break :blk .{ .file = .{ .name = file_name, .handle = handle } };
         } else {
             // show help & exit
             try stdout.print(Header ++ Options, .{honey.version});
@@ -74,7 +80,7 @@ pub fn main() !void {
         }
     };
     // close the file if we opened it
-    defer if (input == .file) input.file.close();
+    defer if (input == .file) input.file.handle.close();
 
     const result = try honey.run(input, .{
         .allocator = allocator,

@@ -26,14 +26,17 @@ const KeywordMap = std.StaticStringMap(Token).initComptime(.{
 
 pub const Data = struct {
     pub const Error = std.mem.Allocator.Error;
+    const DefaultSourceName = "vm";
 
+    source_name: []const u8,
     source: []const u8,
     tokens: std.ArrayList(TokenData),
     line_data: std.ArrayList(utils.Span),
 
-    pub fn init(ally: std.mem.Allocator, source: []const u8) Data {
+    pub fn init(ally: std.mem.Allocator, source: []const u8, source_name: ?[]const u8) Data {
         return .{
             .source = source,
+            .source_name = if (source_name) |name| name else DefaultSourceName,
             .tokens = std.ArrayList(TokenData).init(ally),
             .line_data = std.ArrayList(utils.Span).init(ally),
         };
@@ -81,11 +84,11 @@ cursor: utils.Cursor(u8),
 /// Where the current starting byte offset is
 start_byte_offset: usize = 0,
 
-pub fn init(input: []const u8, ally: std.mem.Allocator) Self {
+pub fn init(input: []const u8, ally: std.mem.Allocator, source_name: ?[]const u8) Self {
     return .{
         .ally = ally,
         .cursor = utils.Cursor(u8).init(input),
-        .data = Data.init(ally, input),
+        .data = Data.init(ally, input, source_name),
     };
 }
 
@@ -312,7 +315,7 @@ fn readIdentifier(self: *Self) TokenData {
 
 /// A helper function to test the lexer
 fn tokenizeAndExpect(input: []const u8, expected: []const TokenData) anyerror!void {
-    var lexer = Self.init(input, std.testing.allocator);
+    var lexer = Self.init(input, std.testing.allocator, null);
     defer lexer.deinit();
     const parsed = try lexer.readAll();
     try std.testing.expectEqualDeep(expected, parsed.tokens.items);

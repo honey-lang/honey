@@ -9,15 +9,18 @@ pub const Vm = @import("vm/Vm.zig");
 
 pub const version = "0.0.1";
 
-pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) Lexer.Data.Error!Lexer.Data {
-    var lexer = Lexer.init(input, allocator);
+pub fn tokenize(input: []const u8, allocator: std.mem.Allocator, source_name: ?[]const u8) Lexer.Data.Error!Lexer.Data {
+    var lexer = Lexer.init(input, allocator, source_name);
     errdefer lexer.deinit();
     return lexer.readAll();
 }
 
 /// The source of the input to be parsed.
 pub const Source = union(enum) {
-    file: std.fs.File,
+    file: struct {
+        name: []const u8,
+        handle: std.fs.File,
+    },
     string: []const u8,
 };
 
@@ -32,10 +35,10 @@ pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
 
     const input: []const u8 = switch (source) {
         .string => |string| string,
-        .file => |file| try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize)),
+        .file => |file| try file.handle.readToEndAlloc(arena.allocator(), std.math.maxInt(usize)),
     };
 
-    const lex_data = try tokenize(input, arena.allocator());
+    const lex_data = try tokenize(input, arena.allocator(), source.file.name);
 
     var parser = Parser.init(lex_data, .{
         .ally = arena.allocator(),
@@ -67,9 +70,9 @@ pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
     var arena = result.arena;
     var compiler = Compiler.init(arena.allocator(), result.data);
 
-    const program = compiler.compile() catch |err| {
-        compiler.diagnostics.dump(options.error_writer);
-        return err;
+    const program = compiler.compile() catch {
+        // compiler.diagnostics.dump(options.error_writer);
+        @panic("need to dump error here");
     };
 
     return Result(Bytecode){

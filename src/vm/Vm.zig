@@ -2,6 +2,8 @@ const std = @import("std");
 const utils = @import("../utils/utils.zig");
 const honey = @import("../honey.zig");
 
+const token = @import("../lexer/token.zig");
+
 const Compiler = @import("../compiler/Compiler.zig");
 const opcodes = @import("../compiler/opcodes.zig");
 const Opcode = opcodes.Opcode;
@@ -562,11 +564,17 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     }
 }
 
+const ReportedToken = token.TokenData{
+    .token = .{ .invalid = '\x00' },
+    .position = .{ .start = 0, .end = 0 },
+};
+
 pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
+    // todo: we need to manage tokens in the compiler & vm somehow
     self.diagnostics.report("[pc: {x:0>4} | op: .{s}]: " ++ fmt, utils.mergeTuples(.{
         .{ self.current_instruction_data.program_counter, @tagName(self.current_instruction_data.opcode) },
         args,
-    }));
+    }), ReportedToken);
 }
 
 /// Reports any errors that have occurred during execution to stderr
@@ -574,9 +582,10 @@ pub fn reportErrors(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    for (self.diagnostics.errors.items, 0..) |msg, index| {
+    const msg_data = self.diagnostics.errors.items(.msg);
+    for (msg_data, 0..) |msg, index| {
         self.options.error_writer.print(" - {s}", .{msg}) catch unreachable;
-        if (index < self.diagnostics.errors.items.len) {
+        if (index < msg_data.len) {
             self.options.error_writer.print("\n", .{}) catch unreachable;
         }
     }

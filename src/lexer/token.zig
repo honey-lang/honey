@@ -255,6 +255,8 @@ pub const TokenData = struct {
 
     /// Returns a new `TokenData` with the position offset by `value`
     pub fn offset(self: TokenData, value: isize) TokenData {
-        return .{ .token = self.token, .position = self.position.offset(value) };
+        var cloned = self.position.clone();
+        _ = cloned.offset(value);
+        return .{ .token = self.token, .position = cloned };
     }
 };

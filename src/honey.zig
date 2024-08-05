@@ -97,7 +97,7 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
     var arena = std.heap.ArenaAllocator.init(options.allocator);
     var vm = Vm.init(result.data, arena.allocator(), .{
         .dump_bytecode = options.dump_bytecode,
-        .error_writer = options.error_writer,
+        .writer = options.error_writer,
     });
     vm.run() catch |err| {
         vm.reportErrors();

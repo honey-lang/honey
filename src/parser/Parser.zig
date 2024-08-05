@@ -259,9 +259,16 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
             }
 
             var terminated: bool = false;
-            if (self.currentIs(.semicolon)) {
-                self.cursor.advance();
-                terminated = true;
+
+            switch (expression) {
+                .for_expr, .while_expr, .if_expr => if (self.currentIs(.semicolon)) {
+                    self.cursor.advance();
+                    terminated = true;
+                },
+                inline else => if (needs_terminated) {
+                    try self.expectSemicolon();
+                    terminated = true;
+                },
             }
             break :blk ast.createExpressionStatement(expression, terminated);
         },

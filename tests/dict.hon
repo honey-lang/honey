@@ -9,7 +9,7 @@ const language = {
 };
 
 // name: "honey"
-const name = language.name
+const name = language.name;
 // version: v0.1.0
 const version = language["version"];
 

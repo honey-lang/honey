@@ -167,10 +167,10 @@ fn compile(source: []const u8, options: CompileOptions) !Result(Bytecode) {
         .error_writer = options.error_writer,
     });
     var arena = result.arena;
-    var compiler = Compiler.init(arena.allocator(), result.data);
+    var compiler = Compiler.init(arena.allocator(), result.data, options.error_writer);
 
     const program = compiler.compile() catch |err| {
-        // todo: dump errors
+        compiler.report();
         return err;
     };
 

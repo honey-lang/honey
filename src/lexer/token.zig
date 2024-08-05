@@ -217,7 +217,7 @@ pub const Token = union(TokenTag) {
             .identifier => |value| try writer.print("{s}", .{value}),
             .string => |value| try writer.print("\"{s}\"", .{value}),
             .builtin => |value| try writer.print("{s}", .{value}),
-            .comment => |comment| try writer.print("// {s}", .{comment}),
+            .comment => |comment| try writer.print("//{s}", .{comment}),
             .invalid => |value| try writer.print("'{c}'", .{value}),
             inline else => try writer.print("{s}", .{self.tag().name()}),
         };

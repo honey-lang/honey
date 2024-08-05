@@ -82,11 +82,16 @@ pub fn main() !void {
     // close the file if we opened it
     defer if (input == .file) input.file.handle.close();
 
-    const result = try honey.run(input, .{
+    const result = honey.run(input, .{
         .allocator = allocator,
         .error_writer = std.io.getStdErr().writer().any(),
         .dump_bytecode = res.args.@"dump-bytecode" == 1,
-    });
+    }) catch |err| switch (err) {
+        // if the error is just telling us we encountered errors,
+        // we shouldn't barf the stacktrace back onto the user
+        error.EncounteredErrors => return,
+        inline else => return err,
+    };
     defer result.deinit();
 
     var vm = result.data;

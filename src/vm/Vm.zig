@@ -2,6 +2,8 @@ const std = @import("std");
 const utils = @import("../utils/utils.zig");
 const honey = @import("../honey.zig");
 
+const token = @import("../lexer/token.zig");
+
 const Compiler = @import("../compiler/Compiler.zig");
 const opcodes = @import("../compiler/opcodes.zig");
 const Opcode = opcodes.Opcode;
@@ -137,7 +139,8 @@ writer: std.io.AnyWriter,
 pub const VmOptions = struct {
     /// If enabled, it will dump the bytecode into stderr before running the program
     dump_bytecode: bool = false,
-    writer: std.io.AnyWriter,
+    /// The writer used for reporting errors
+    error_writer: std.io.AnyWriter,
 };
 
 /// Initializes the VM with the needed values
@@ -560,22 +563,29 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     }
 }
 
+const ReportedToken = token.TokenData{
+    .token = .{ .invalid = '\x00' },
+    .position = .{ .start = 0, .end = 0 },
+};
+
 pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
+    // todo: we need to manage tokens in the compiler & vm somehow
     self.diagnostics.report("[pc: {x:0>4} | op: .{s}]: " ++ fmt, utils.mergeTuples(.{
         .{ self.current_instruction_data.program_counter, @tagName(self.current_instruction_data.opcode) },
         args,
-    }));
+    }), ReportedToken);
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn reportErrors(self: *Self, error_writer: std.io.AnyWriter) void {
+pub fn reportErrors(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    for (self.diagnostics.errors.items, 0..) |msg, index| {
-        error_writer.print(" - {s}", .{msg}) catch unreachable;
-        if (index < self.diagnostics.errors.items.len) {
-            error_writer.print("\n", .{}) catch unreachable;
+    const msg_data = self.diagnostics.errors.items(.msg);
+    for (msg_data, 0..) |msg, index| {
+        self.options.error_writer.print(" - {s}", .{msg}) catch unreachable;
+        if (index < msg_data.len) {
+            self.options.error_writer.print("\n", .{}) catch unreachable;
         }
     }
 }
@@ -855,9 +865,15 @@ inline fn nativeBoolToValue(value: bool) Value {
 
 test "ensure program results in correct value" {
     const ally = std.testing.allocator;
-    const result = try honey.compile(.{ .string = "1 + 2" }, .{ .allocator = ally, .error_writer = std.io.getStdErr().writer() });
+    const error_writer = std.io.getStdErr().writer().any();
+    const result = try honey.compile(.{ .string = "1 + 2" }, .{
+        .allocator = ally,
+        .error_writer = error_writer,
+    });
     defer result.deinit();
-    var vm = Self.init(result.data, ally, .{});
+    var vm = Self.init(result.data, ally, .{
+        .error_writer = error_writer,
+    });
     defer vm.deinit();
     try vm.run();
 

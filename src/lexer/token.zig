@@ -110,6 +110,45 @@ pub const TokenTag = enum {
     pipe,
     /// .invalid represents an invalid character
     invalid,
+
+    pub fn name(self: TokenTag) []const u8 {
+        return switch (self) {
+            .equal => "==",
+            .not_equal => "!=",
+            .greater_than => ">",
+            .greater_than_equal => ">=",
+            .less_than => "<",
+            .less_than_equal => "<=",
+            .bang => "!",
+            .plus => "+",
+            .minus => "-",
+            .star => "*",
+            .slash => "/",
+            .modulo => "%",
+            .doublestar => "**",
+            .semicolon => ";",
+            .colon => ":",
+            .assignment => "=",
+            .plus_assignment => "+=",
+            .minus_assignment => "-=",
+            .star_assignment => "*=",
+            .slash_assignment => "/=",
+            .modulo_assignment => "%=",
+            .doublestar_assignment => "**=",
+            .comma => ",",
+            .left_paren => "(",
+            .right_paren => ")",
+            .left_bracket => "[",
+            .right_bracket => "]",
+            .left_brace => "{",
+            .right_brace => "}",
+            .dot => ".",
+            .exclusive_range => "..",
+            .inclusive_range => "...",
+            .pipe => "|",
+            inline else => @tagName(self),
+        };
+    }
 };
 
 pub const Token = union(TokenTag) {
@@ -168,21 +207,19 @@ pub const Token = union(TokenTag) {
     pipe,
     invalid: u8,
 
+    pub fn tag(self: Token) TokenTag {
+        return std.meta.activeTag(self);
+    }
+
     pub fn format(self: Token, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (self) {
-            .number => |value| try writer.print("{{ .number = \"{s}\" }}", .{value}),
-            .identifier => |value| try writer.print("{{ .identifier = \"{s}\" }}", .{value}),
-            .string => |value| try writer.print("{{ .string = \"{s}\" }}", .{value}),
-            .builtin => |value| try writer.print("{{ .builtin = \"{s}\" }}", .{value}),
-            .invalid => |value| try writer.print("{{ .invalid = '{c}' }}", .{value}),
-            .assignment => try writer.writeAll("="),
-            .plus_assignment => try writer.writeAll("+="),
-            .minus_assignment => try writer.writeAll("-="),
-            .star_assignment => try writer.writeAll("*="),
-            .slash_assignment => try writer.writeAll("/="),
-            .modulo_assignment => try writer.writeAll("%="),
-            .doublestar_assignment => try writer.writeAll("**="),
-            inline else => try writer.print(".{s}", .{@tagName(self)}),
+            .number => |value| try writer.print("{s}", .{value}),
+            .identifier => |value| try writer.print("{s}", .{value}),
+            .string => |value| try writer.print("\"{s}\"", .{value}),
+            .builtin => |value| try writer.print("{s}", .{value}),
+            .comment => |comment| try writer.print("//{s}", .{comment}),
+            .invalid => |value| try writer.print("'{c}'", .{value}),
+            inline else => try writer.print("{s}", .{self.tag().name()}),
         };
     }
 
@@ -203,7 +240,7 @@ pub const Token = union(TokenTag) {
 
 pub const TokenData = struct {
     token: Token,
-    position: utils.Position,
+    position: utils.Span,
 
     pub fn create(token: Token, start: usize, end: usize) TokenData {
         return .{
@@ -214,5 +251,12 @@ pub const TokenData = struct {
 
     pub fn format(self: TokenData, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("TokenData {{ .token = {s}, .position = {s} }}", .{ self.token, self.position });
+    }
+
+    /// Returns a new `TokenData` with the position offset by `value`
+    pub fn offset(self: TokenData, value: isize) TokenData {
+        var cloned = self.position.clone();
+        _ = cloned.offset(value);
+        return .{ .token = self.token, .position = cloned };
     }
 };

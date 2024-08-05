@@ -77,7 +77,12 @@ const ErrorData = struct {
 const Self = @This();
 
 arena: std.heap.ArenaAllocator,
+/// The main data compiled from the lexer
+lex_data: Lexer.Data,
+/// A cursor that iterates through the tokens
 cursor: utils.Cursor(TokenData),
+/// Spans that consist of the lines
+line_data: []const utils.Span,
 error_writer: std.io.AnyWriter,
 diagnostics: utils.Diagnostics,
 
@@ -87,10 +92,12 @@ const ParserOptions = struct {
 };
 
 /// Initializes the parser.
-pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
+pub fn init(data: Lexer.Data, options: ParserOptions) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(options.ally),
-        .cursor = utils.Cursor(TokenData).init(tokens),
+        .lex_data = data,
+        .cursor = utils.Cursor(TokenData).init(data.tokens.items),
+        .line_data = data.line_data.items,
         .error_writer = options.error_writer,
         .diagnostics = utils.Diagnostics.init(options.ally),
     };
@@ -100,6 +107,7 @@ pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
 pub fn deinit(self: *Self) void {
     self.arena.deinit();
     self.diagnostics.deinit();
+    self.lex_data.deinit();
 }
 
 pub fn allocator(self: *Self) std.mem.Allocator {
@@ -114,19 +122,64 @@ fn moveToHeap(self: *Self, value: anytype) ParserError!*@TypeOf(value) {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn report(self: *Self, error_writer: std.io.AnyWriter) void {
+pub fn report(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
-    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
-    for (self.diagnostics.errors.items, 0..) |msg, index| {
-        error_writer.print(" - {s}", .{msg}) catch unreachable;
-        if (index < self.diagnostics.errors.items.len) {
-            error_writer.print("\n", .{}) catch unreachable;
+
+    // todo: color!
+    const msg_data = self.diagnostics.errors.items(.msg);
+    const token_data = self.diagnostics.errors.items(.token_data);
+    for (msg_data, token_data, 0..) |msg, token_datum, index| {
+        self.printErrorAtToken(token_datum, msg) catch unreachable;
+        if (index < self.diagnostics.errors.len) {
+            self.error_writer.writeByte('\n') catch unreachable;
         }
     }
-    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
+}
+
+/// Attempts to match a token to the line that it exists on
+pub fn findLineIndex(self: *Self, token_data: TokenData) ?usize {
+    return std.sort.binarySearch(utils.Span, token_data.position, self.line_data, {}, struct {
+        pub fn find(_: void, key: utils.Span, mid_item: utils.Span) std.math.Order {
+            if (key.start >= mid_item.start and key.end <= mid_item.end) {
+                return .eq;
+            } else if (key.end < mid_item.start) {
+                return .lt;
+            }
+            return .gt;
+        }
+    }.find);
+}
+
+/// Attempts to match a token to the line that it exists on
+pub fn findLine(self: *Self, token_data: TokenData) ?utils.Span {
+    const result = self.findLineIndex(token_data);
+    return if (result) |found| self.line_data[found] else null;
+}
+
+/// Prints
+pub fn printErrorAtToken(self: *Self, token_data: TokenData, msg: []const u8) !void {
+    const line_index = self.findLineIndex(token_data) orelse return ParserError.UnexpectedToken;
+    const line = self.line_data[line_index];
+
+    const column_index = token_data.position.start - line.start;
+
+    // todo: move to terminal
+    // we offset the line & column by one for one-indexing
+    try self.error_writer.print("[{s}:{d}:{d}] error: {s}\n", .{ self.lex_data.source_name, line_index + 1, column_index + 1, msg });
+
+    try self.error_writer.writeByte('\t');
+    _ = try self.error_writer.write(self.lex_data.getLineBySpan(line));
+    try self.error_writer.writeByte('\n');
+
+    try self.error_writer.writeByte('\t');
+    // pad up to the token
+    try self.error_writer.writeByteNTimes(' ', column_index);
+    // arrows to indicate token highlighted
+
+    const token_len = token_data.position.end - token_data.position.start;
+    try self.error_writer.writeByteNTimes('~', token_len + 1);
 }
 
 /// Parses the tokens into an AST.
@@ -153,25 +206,27 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
         .@"return" => blk: {
             self.cursor.advance();
             if (self.currentIs(.semicolon)) {
-                try self.expectCurrentAndAdvance(.semicolon);
+                self.cursor.advance();
                 break :blk .{ .@"return" = .{ .expression = null } };
             }
             const expression = try self.parseExpression(.lowest);
-            try self.expectCurrentAndAdvance(.semicolon);
+            if (needs_terminated) {
+                try self.expectSemicolon();
+            }
             break :blk .{ .@"return" = .{ .expression = expression } };
         },
         .@"break" => blk: {
             self.cursor.advance();
-            if (self.currentIs(.semicolon)) {
-                try self.expectCurrentAndAdvance(.semicolon);
+            if (needs_terminated) {
+                try self.expectSemicolon();
             }
             // todo: break values
             break :blk .@"break";
         },
         .@"continue" => blk: {
             self.cursor.advance();
-            if (self.currentIs(.semicolon)) {
-                try self.expectCurrentAndAdvance(.semicolon);
+            if (needs_terminated) {
+                try self.expectSemicolon();
             }
             break :blk .@"continue";
         },
@@ -204,13 +259,41 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
             }
 
             var terminated: bool = false;
-            if (self.currentIs(.semicolon)) {
-                self.cursor.advance();
-                terminated = true;
+
+            switch (expression) {
+                .for_expr, .while_expr, .if_expr => if (self.currentIs(.semicolon)) {
+                    self.cursor.advance();
+                    terminated = true;
+                },
+                inline else => if (needs_terminated) {
+                    try self.expectSemicolon();
+                    terminated = true;
+                },
             }
             break :blk ast.createExpressionStatement(expression, terminated);
         },
     };
+}
+
+/// Reports an error if a semi-colon is missing
+fn expectSemicolon(self: *Self) ParserError!void {
+    if (self.currentIs(.semicolon)) {
+        self.cursor.advance();
+        return;
+    }
+
+    // todo: is there a better way to implement this?
+    const prev = self.cursor.previous().?;
+
+    var position = prev.position.clone();
+    _ = position.offset(1);
+    _ = position.moveToEnd();
+    self.diagnostics.report("expected ';' after statement", .{}, .{
+        .token = prev.token,
+        // offset by 1 and move
+        .position = position,
+    });
+    return ParserError.UnexpectedToken;
 }
 
 /// Parses a let/const statement.
@@ -235,7 +318,7 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
     self.cursor.advance();
 
     const expression = try self.parseExpression(.lowest);
-    try self.expectCurrentAndAdvance(.semicolon);
+    try self.expectSemicolon();
     return .{ .variable = .{
         .kind = kind_token,
         .name = identifier_token.identifier,
@@ -254,7 +337,7 @@ fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool
     }
     const rhs = try self.parseExpression(.lowest);
     if (needs_terminated) {
-        try self.expectCurrentAndAdvance(.semicolon);
+        try self.expectSemicolon();
     }
 
     // std.debug.print("Assignment: {s} {s} {s}\n", .{ lhs, assignment_token_data.token, rhs });
@@ -277,7 +360,7 @@ fn parseFunctionParameters(self: *Self) ParserError![]const Expression {
     const expressions = try self.parseExpressionList(.left_paren, .right_paren);
     for (expressions) |expr| {
         if (expr != .identifier) {
-            self.diagnostics.report("expected identifier but got: {}", .{expr});
+            self.diagnostics.report("expected identifier but got: {}", .{expr}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
     }
@@ -320,23 +403,27 @@ fn parseDictExpression(self: *Self) ParserError!Expression {
     while (self.cursor.canRead()) {
         const key = try self.parseExpression(.lowest);
         if (key != .identifier and key != .string) {
-            self.diagnostics.report("expected identifier or string but got: {}", .{key});
+            self.diagnostics.report("expected identifier or string but got: {}", .{key}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
         try self.expectCurrentAndAdvance(.colon);
         const value = try self.parseExpression(.lowest);
-        // if we encounter a comma, we should expect another key-value pair
-        if (self.currentIs(.comma)) {
-            self.cursor.advance();
-        }
 
         keys.append(key) catch return ParserError.OutOfMemory;
         values.append(value) catch return ParserError.OutOfMemory;
+
+        // trailing commas are okay
+        if (self.currentIs(.comma) and self.peekIs(.right_brace)) {
+            self.cursor.advance();
+        }
 
         if (self.currentIs(.right_brace)) {
             self.cursor.advance();
             break;
         }
+
+        // if it's not a right brace, we should expect a comma
+        try self.expectCurrentAndAdvance(.comma);
     }
     return .{ .dict = .{
         .keys = keys.toOwnedSlice() catch return ParserError.OutOfMemory,
@@ -347,7 +434,7 @@ fn parseDictExpression(self: *Self) ParserError!Expression {
 fn parseIdentifier(self: *Self) ParserError!Expression {
     const current = try self.readAndAdvance();
     if (current.token != .identifier) {
-        self.diagnostics.report("expected identifier but got: {}", .{current.token});
+        self.diagnostics.report("expected identifier but got: {}", .{current.token}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
     return .{ .identifier = current.token.identifier };
@@ -375,7 +462,7 @@ fn parseIfBody(self: *Self) ParserError!ast.IfExpression.Body {
 
 fn parseIfExpression(self: *Self) ParserError!Expression {
     if (!self.currentIs(.@"if")) {
-        self.diagnostics.report("expected if but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected if but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
 
@@ -422,7 +509,7 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
         try self.expectCurrentAndAdvance(.right_paren);
     }
     const body = try self.parseStatement(false) orelse {
-        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     };
 
@@ -450,13 +537,13 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     const captures = try self.parseExpressionList(.pipe, .pipe);
     for (captures) |capture_ptr| {
         if (capture_ptr != .identifier) {
-            self.diagnostics.report("expected identifier but got: {}", .{capture_ptr});
+            self.diagnostics.report("expected identifier but got: {}", .{capture_ptr}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
     }
     // { ... }
     const body = try self.parseStatement(false) orelse {
-        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected statement but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     };
 
@@ -475,7 +562,7 @@ fn parseRange(self: *Self) ParserError!Expression {
         .inclusive_range => true,
         .exclusive_range => false,
         inline else => {
-            self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()});
+            self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()}, self.cursor.current());
             return ParserError.UnexpectedToken;
         },
     };
@@ -520,7 +607,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
             break :blk parsed;
         },
         inline else => {
-            self.diagnostics.report("no prefix parse rule for token: {}", .{current.token});
+            self.diagnostics.report("unable to parse '{s}' as prefix", .{current.token}, current);
             return ParserError.NoPrefixParseRule;
         },
     };
@@ -545,7 +632,7 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
 /// Parses a call expression using the given identifier as the name.
 fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
     if (expr.* != .identifier) {
-        self.diagnostics.report("expected identifier but got: {}", .{expr});
+        self.diagnostics.report("expected identifier but got: {}", .{expr}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
     // rewind the cursor to make sure we can use `parseExpressionList`
@@ -557,7 +644,7 @@ fn parseCallExpression(self: *Self, expr: *Expression) ParserError!Expression {
 /// Parses a member expression given the LHS
 fn parseMemberExpression(self: *Self, lhs: *Expression) ParserError!Expression {
     if (!self.currentIs(.identifier)) {
-        self.diagnostics.report("expected identifier but got: {}", .{self.currentToken()});
+        self.diagnostics.report("expected identifier but got: {}", .{self.currentToken()}, self.cursor.current());
         return ParserError.UnexpectedToken;
     }
     const member = try self.readAndAdvance();
@@ -630,11 +717,12 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 /// Throws an error if the current token is not the expected tag.
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected current token: {} but got EOF", .{tag});
+        // offset by one so it doesn't highlight the previous token
+        self.diagnostics.report("expected '{s}' but got EOF", .{tag.name()}, self.cursor.previous().?.offset(1));
         return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
-        self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() });
+        self.diagnostics.report("expected '{s}' but got '{s}'", .{ tag.name(), self.currentToken() }, self.cursor.current());
         return ParserError.ExpectedCurrentMismatch;
     }
     self.cursor.advance();
@@ -642,12 +730,13 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
 
 /// Throws an error if the current token is not the expected tag.
 fn expectPeekAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
-    if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected peek token: {} but got EOF", .{tag});
+    const peek = self.cursor.peek() orelse {
+        // offset by one so it doesn't highlight the current token
+        self.diagnostics.report("expected token '{s}' but got EOF", .{tag.name()}, self.cursor.current().offset(1));
         return ParserError.UnexpectedEOF;
-    }
+    };
     if (!self.peekIs(tag)) {
-        self.diagnostics.report("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null });
+        self.diagnostics.report("expected token: '{s}' but got '{s}'", .{ tag.name(), peek }, peek);
         return ParserError.ExpectedPeekMismatch;
     }
     self.cursor.advance();
@@ -667,18 +756,18 @@ fn peekPrecedence(self: *Self) ParserError!Precedence {
 fn parseAndExpect(input: []const u8, test_func: *const fn (*Program) anyerror!void) anyerror!void {
     const honey = @import("../honey.zig");
     const ally = std.testing.allocator;
-    const tokens = try honey.tokenize(input, ally);
-    defer ally.free(tokens);
-    var parser = init(tokens, .{ .ally = ally });
+    var data = try honey.tokenize(input, ally);
+    errdefer data.deinit();
+    var parser = init(data, .{
+        .ally = ally,
+        .error_writer = std.io.getStdErr().writer().any(),
+    });
     defer parser.deinit();
     var program = parser.parse() catch |err| {
-        parser.diagnostics.dump(std.io.getStdErr().writer());
+        parser.report();
         return err;
     };
     defer program.deinit();
-
-    // std.debug.print("Statement: {s}\n", .{program.statements.items[0]});
-
     try test_func(&program);
 }
 
@@ -889,9 +978,11 @@ test "test parsing simple for expression" {
             var block = ast.createBlockStatement(&[_]ast.Statement{
                 ast.createCallStatement("doSomething", &.{}, true),
             });
+
+            const capture_i = ast.Expression{ .identifier = "i" };
             const expected = ast.createForStatement(
                 &for_range,
-                "i",
+                &.{capture_i},
                 &block,
                 false,
             );
@@ -1006,4 +1097,28 @@ test "test parsing nested member indexing of dict expression" {
             try std.testing.expectEqualDeep(expected, statements[0]);
         }
     }.func);
+}
+
+test "test span finding" {
+    const honey = @import("../honey.zig");
+    const source =
+        \\const a = 1;
+        \\const b = true;
+        \\const c = "false";
+        \\const d = null;
+    ;
+    const ally = std.testing.allocator;
+    const data = try honey.tokenize(source, ally);
+    var parser = init(data, .{
+        .ally = ally,
+        .error_writer = std.io.getStdErr().writer().any(),
+    });
+    defer parser.deinit();
+
+    const true_token_data = data.tokens.items[8];
+    try std.testing.expectEqual(.true, true_token_data.token.tag());
+
+    const found_line_data = parser.findLine(true_token_data);
+    try std.testing.expect(found_line_data != null);
+    try std.testing.expectEqualDeep(utils.Span{ .start = 13, .end = 28 }, found_line_data.?);
 }

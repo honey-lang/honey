@@ -24,32 +24,91 @@ const KeywordMap = std.StaticStringMap(Token).initComptime(.{
     .{ "and", .@"and" },
 });
 
-const Self = @This();
+pub const Data = struct {
+    pub const Error = std.mem.Allocator.Error;
+    /// The default source name to use when none is provided
+    /// This happens primarily due to direct input or the playground
+    const DefaultSourceName = "vm";
 
-/// A list of generated tokens from the lexer
-tokens: std.ArrayList(TokenData),
+    source_name: []const u8,
+    source: []const u8,
+    tokens: std.ArrayList(TokenData),
+    line_data: std.ArrayList(utils.Span),
+
+    pub fn init(ally: std.mem.Allocator, source: []const u8, source_name: ?[]const u8) Data {
+        return .{
+            .source = source,
+            .source_name = if (source_name) |name| name else DefaultSourceName,
+            .tokens = std.ArrayList(TokenData).init(ally),
+            .line_data = std.ArrayList(utils.Span).init(ally),
+        };
+    }
+
+    pub fn deinit(self: *Data) void {
+        self.tokens.deinit();
+        self.line_data.deinit();
+    }
+
+    pub fn addToken(self: *Data, token: TokenData) Error!void {
+        try self.tokens.append(token);
+    }
+
+    pub fn addLineData(self: *Data, datum: utils.Span) Error!void {
+        try self.line_data.append(datum);
+    }
+
+    /// Returns a slice of the source based on the line number provided
+    pub fn getLineByNum(self: *Data, line_no: usize) ?[]const u8 {
+        const line_index = line_no - 1;
+        // line index exceeds bounds. we *should* error here but a null is fine for now
+        if (line_index >= self.line_data.items.len) return null;
+
+        const line_data = self.line_data.items[line_index];
+        return self.source[line_data.start..line_data.end];
+    }
+
+    /// Returns a slice of the source based on the line data provided
+    pub fn getLineBySpan(self: *Data, line_data: utils.Span) []const u8 {
+        // todo: we should probably do error handling
+        return self.source[line_data.start..line_data.end];
+    }
+};
+
+const Self = @This();
+const NewLineSeparator = '\n';
+
+/// The allocator used to allocate the data from the lexer
+ally: std.mem.Allocator,
+/// The data accumulated from the lexer
+data: Data,
 /// The current position of the lexer
 cursor: utils.Cursor(u8),
+/// Where the current starting byte offset is
+start_byte_offset: usize = 0,
 
-pub fn init(input: []const u8, allocator: std.mem.Allocator) Self {
-    return .{ .tokens = std.ArrayList(TokenData).init(allocator), .cursor = utils.Cursor(u8).init(input) };
+pub fn init(input: []const u8, ally: std.mem.Allocator, source_name: ?[]const u8) Self {
+    return .{
+        .ally = ally,
+        .cursor = utils.Cursor(u8).init(input),
+        .data = Data.init(ally, input, source_name),
+    };
 }
 
 pub fn deinit(self: *Self) void {
-    self.tokens.deinit();
+    self.data.deinit();
 }
 
 /// Reads as many tokens as possible from the current position
-pub fn readAll(self: *Self) ![]const TokenData {
-    while (self.read()) |token| {
-        try self.tokens.append(token);
+pub fn readAll(self: *Self) Data.Error!Data {
+    while (try self.read()) |token| {
+        try self.data.addToken(token);
     }
-    return self.tokens.items;
+    return self.data;
 }
 
 /// Reads a single token from the current position or null if no token could be read
-pub fn read(self: *Self) ?TokenData {
-    self.skipWhitespace();
+pub fn read(self: *Self) Data.Error!?TokenData {
+    try self.skipWhitespace();
     if (!self.cursor.canRead()) {
         return null;
     }
@@ -72,9 +131,41 @@ pub fn read(self: *Self) ?TokenData {
     };
 }
 
+/// Returns true if the char is whitespace and
+fn isNonNewLineWhitespace(char: u8) bool {
+    return std.ascii.isWhitespace(char) and char != NewLineSeparator;
+}
+
 /// Skips all whitespace from the current position
-inline fn skipWhitespace(self: *Self) void {
-    _ = self.cursor.readWhile(std.ascii.isWhitespace);
+fn skipWhitespace(self: *Self) std.mem.Allocator.Error!void {
+    // i'd love to get rid of this (potential) infinite loop
+    // at the moment, it's here so that we can ensure we can
+    // add the last span to the list before we exit the loop
+    while (true) : (self.cursor.advance()) {
+        // if we encounter the end of the stream, add the last span and break
+        if (!self.cursor.canRead()) {
+            try self.createLineData();
+            break;
+        }
+
+        const current = self.cursor.current();
+        // break early if we encounter non-whitespace
+        if (!std.ascii.isWhitespace(current)) {
+            break;
+        }
+
+        // if we a new line, add a span to the list and advance the cursor
+        if (current == NewLineSeparator) {
+            try self.createLineData();
+        }
+    }
+}
+
+/// Creates a span from the Lexer's current `start_byte_offset` and the cursor's current index
+/// Has the side effect of updating `start_byte_offset` to the next cursor index
+fn createLineData(self: *Self) std.mem.Allocator.Error!void {
+    try self.data.addLineData(.{ .start = self.start_byte_offset, .end = self.cursor.index });
+    self.start_byte_offset = self.cursor.index + 1;
 }
 
 // Reads tokens from a map of characters to tokens or a fallback if no match was found
@@ -113,7 +204,7 @@ fn readComment(self: *Self) ?TokenData {
     }
     const data, const position = self.cursor.readUntil(struct {
         fn check(char: u8) bool {
-            return char == '\n';
+            return char == NewLineSeparator;
         }
     }.check);
     return TokenData.create(.{ .comment = std.mem.trim(u8, data, "/") }, position.start, position.end);
@@ -226,10 +317,10 @@ fn readIdentifier(self: *Self) TokenData {
 
 /// A helper function to test the lexer
 fn tokenizeAndExpect(input: []const u8, expected: []const TokenData) anyerror!void {
-    var lexer = Self.init(input, std.testing.allocator);
+    var lexer = Self.init(input, std.testing.allocator, null);
     defer lexer.deinit();
     const parsed = try lexer.readAll();
-    try std.testing.expectEqualDeep(expected, parsed);
+    try std.testing.expectEqualDeep(expected, parsed.tokens.items);
 }
 
 test "test simple lexer" {

@@ -26,6 +26,8 @@ const KeywordMap = std.StaticStringMap(Token).initComptime(.{
 
 pub const Data = struct {
     pub const Error = std.mem.Allocator.Error;
+    /// The default source name to use when none is provided
+    /// This happens primarily due to direct input or the playground
     const DefaultSourceName = "vm";
 
     source_name: []const u8,

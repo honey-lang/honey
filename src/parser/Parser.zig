@@ -127,6 +127,7 @@ pub fn report(self: *Self) void {
         return;
     }
 
+    // todo: color!
     const msg_data = self.diagnostics.errors.items(.msg);
     const token_data = self.diagnostics.errors.items(.token_data);
     for (msg_data, token_data, 0..) |msg, token_datum, index| {

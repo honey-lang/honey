@@ -285,7 +285,7 @@ fn expectSemicolon(self: *Self) ParserError!void {
     const prev = self.cursor.previous().?;
     self.diagnostics.report("expected ';' after statement", .{}, .{
         .token = prev.token,
-        .position = .{ .start = prev.position.end + 1, .end = prev.position.end + 1 },
+        .position = prev.position.offset(1),
     });
     return ParserError.UnexpectedToken;
 }
@@ -704,7 +704,7 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 /// Throws an error if the current token is not the expected tag.
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected '{s}' but got EOF", .{tag.name()}, self.cursor.current());
+        self.diagnostics.report("expected '{s}' but got EOF", .{tag.name()}, self.cursor.previous().?);
         return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {

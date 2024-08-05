@@ -9,6 +9,22 @@ pub const Span = struct {
     pub fn format(self: Span, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("{{ .start = {d}, .end = {d} }}", .{ self.start, self.end });
     }
+
+    pub fn offset(self: Span, value: usize) Span {
+        return .{ .start = self.start + value, .end = self.end + value };
+    }
+
+    pub fn offsetStart(self: Span, value: usize) Span {
+        return .{ .start = self.start + value, .end = self.end };
+    }
+
+    pub fn offsetEnd(self: Span, value: usize) Span {
+        return .{ .start = self.start, .end = self.end + value };
+    }
+
+    pub fn offsetBoth(self: Span, start_offset: usize, end_offset: usize) Span {
+        return .{ .start = self.start + start_offset, .end = self.end + end_offset };
+    }
 };
 
 pub fn Cursor(comptime T: type) type {

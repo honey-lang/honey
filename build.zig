@@ -94,11 +94,11 @@ pub fn build(b: *std.Build) !void {
     playground_exe.entry = .disabled;
 
     const playground_install = b.addInstallArtifact(playground_exe, .{
-        .dest_dir = .{ .override = .{ .custom = "../src/playground/src/assets" } },
+        .dest_dir = .{ .override = .{ .custom = "../playground/src/assets" } },
     });
     playground_install.step.dependOn(&playground_exe.step);
 
-    const run_bun = b.addSystemCommand(&.{ "bun", "run", "--cwd", "./src/playground", "dev" });
+    const run_bun = b.addSystemCommand(&.{ "bun", "run", "--cwd", "./playground", "dev" });
 
     const playground_step = b.step("playground", "Builds the WASM library and runs the playground");
     run_bun.step.dependOn(&playground_install.step);

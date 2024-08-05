@@ -179,7 +179,6 @@ pub fn printErrorAtToken(self: *Self, token_data: TokenData, msg: []const u8) !v
 
     const token_len = token_data.position.end - token_data.position.start;
     try self.error_writer.writeByteNTimes('~', token_len + 1);
-    try self.error_writer.writeByte('\n');
 }
 
 /// Parses the tokens into an AST.

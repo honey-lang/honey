@@ -15,20 +15,41 @@ pub const Span = struct {
         return @intCast(@addWithOverflow(cast_base, offset_value).@"0");
     }
 
-    pub fn offset(self: Span, value: isize) Span {
-        return .{ .start = add(self.start, value), .end = add(self.end, value) };
+    /// Clones the span
+    pub fn clone(self: Span) Span {
+        return .{ .start = self.start, .end = self.end };
     }
 
-    pub fn offsetStart(self: Span, value: isize) Span {
-        return .{ .start = add(self.start, value), .end = self.end };
+    /// Returns the length of the span
+    pub fn len(self: Span) usize {
+        return self.end - self.start;
     }
 
-    pub fn offsetEnd(self: Span, value: isize) Span {
-        return .{ .start = self.start, .end = add(self.end, value) };
+    pub fn offset(self: *Span, value: isize) *Span {
+        self.start += add(self.start, value);
+        self.end = add(self.end, value);
+        return self;
     }
 
-    pub fn offsetBoth(self: Span, start_offset: isize, end_offset: isize) Span {
-        return .{ .start = add(self.start, start_offset), .end = add(self.end, end_offset) };
+    pub fn offsetStart(self: *Span, value: isize) *Span {
+        self.start += add(self.start, value);
+        return self;
+    }
+
+    pub fn offsetEnd(self: *Span, value: isize) *Span {
+        self.end = add(self.end, value);
+        return self;
+    }
+
+    pub fn offsetBoth(self: *Span, start_offset: isize, end_offset: isize) *Span {
+        self.start += add(self.start, start_offset);
+        self.end = add(self.end, end_offset);
+        return self;
+    }
+
+    pub fn moveToEnd(self: *Span) *Span {
+        self.start = self.end;
+        return self;
     }
 };
 

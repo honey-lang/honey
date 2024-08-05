@@ -68,11 +68,11 @@ pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
         .error_writer = options.error_writer,
     });
     var arena = result.arena;
-    var compiler = Compiler.init(arena.allocator(), result.data);
+    var compiler = Compiler.init(arena.allocator(), result.data, options.error_writer);
 
     const program = compiler.compile() catch {
-        // compiler.diagnostics.dump(options.error_writer);
-        @panic("need to dump error here");
+        compiler.report();
+        return error.EncounteredErrors;
     };
 
     return Result(Bytecode){
@@ -99,9 +99,9 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
         .dump_bytecode = options.dump_bytecode,
         .writer = options.error_writer,
     });
-    vm.run() catch |err| {
-        vm.reportErrors();
-        return err;
+    vm.run() catch {
+        vm.report();
+        return error.EncounteredErrors;
     };
     return Result(Vm){ .data = vm, .arena = arena };
 }

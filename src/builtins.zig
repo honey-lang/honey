@@ -81,7 +81,7 @@ pub fn println(_: *Vm, args: []const Value) !?Value {
 /// Returns the name of the operating system.
 pub fn os(vm: *Vm, args: []const Value) !?Value {
     if (args.len != 0) {
-        vm.report("os: expected 0 arguments, got {}", .{args.len});
+        vm.reportError("os: expected 0 arguments, got {}", .{args.len});
         return error.InvalidNumberOfArguments;
     }
 

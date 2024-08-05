@@ -217,9 +217,11 @@ last_compiled_instr: ?CompiledInstruction = null,
 penult_compiled_instr: ?CompiledInstruction = null,
 /// Context about the current scope
 scope_context: ScopeContext,
+/// The writer used for error reporting
+error_writer: std.io.AnyWriter,
 
 /// Initializes the compiler
-pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
+pub fn init(ally: std.mem.Allocator, program: ast.Program, error_writer: std.io.AnyWriter) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
@@ -228,6 +230,7 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program) Self {
         .constants = std.ArrayList(Value).init(ally),
         .declared_global_identifiers = GlobalIdentifierMap.init(ally),
         .scope_context = ScopeContext.init(ally),
+        .error_writer = error_writer,
     };
 }
 
@@ -262,7 +265,7 @@ fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
 fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction) Error!void {
     const new_opcode = std.meta.activeTag(new_instr);
     if (old.opcode != new_opcode) {
-        self.report("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
+        self.reportError("Expected opcode to match but found {s} and {s}", .{ @tagName(old.opcode), @tagName(new_opcode) });
         return error.OpcodeReplaceMismatch;
     }
 
@@ -311,9 +314,18 @@ const ReportedToken = token.TokenData{
     .position = .{ .start = 0, .end = 0 },
 };
 
-pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
-    // todo: we need to manage tokens in the compiler & vm somehow
+pub fn reportError(self: *Self, comptime fmt: []const u8, args: anytype) void {
     self.diagnostics.report(fmt, args, ReportedToken);
+}
+
+pub fn report(self: *Self) void {
+    if (!self.diagnostics.hasErrors()) {
+        return;
+    }
+    const msg_data = self.diagnostics.errors.items(.msg);
+    for (msg_data) |msg| {
+        self.error_writer.print("error: {s}\n", .{msg}) catch unreachable;
+    }
 }
 
 /// Compiles the program into bytecode
@@ -337,7 +349,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             // declare a global variable if we're at the top level
             if (self.scope_context.current_depth <= 0) {
                 if (self.hasGlobal(inner.name)) {
-                    self.report("Identifier \"{s}\" already exists in the current scope", .{inner.name});
+                    self.reportError("Variable '{s}' already exists in the current scope", .{inner.name});
                     return Error.VariableAlreadyExists;
                 }
 
@@ -353,7 +365,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             // if the variable name already exists in the current scope, throw an error
             for (self.scope_context.getLocals()) |local| {
                 if (local.depth <= self.scope_context.current_depth and std.mem.eql(u8, local.name, inner.name)) {
-                    self.report("Variable {s} already exists in the current scope", .{inner.name});
+                    self.reportError("Variable {s} already exists in the current scope", .{inner.name});
                     return Error.VariableAlreadyExists;
                 }
             }
@@ -366,13 +378,13 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 if (self.scope_context.resolveLocalOffset(name)) |offset| {
                     // fetch local
                     const local = self.scope_context.getLocal(offset) catch |err| {
-                        self.report("Local variable out of bounds: {s}", .{name});
+                        self.reportError("Local variable out of bounds: {s}", .{name});
                         return err;
                     };
 
                     // if local is a constant, error out
                     if (local.is_const) {
-                        self.report("Cannot reassign constant variable: {s}", .{name});
+                        self.reportError("Cannot reassign constant variable: {s}", .{name});
                         return Error.VariableAlreadyExists;
                     }
 
@@ -404,7 +416,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             },
             .index => |index_expr| {
                 if (index_expr.lhs.* != .identifier) {
-                    self.report("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
+                    self.reportError("Expected identifier for index assignment but got: {s}", .{index_expr.lhs});
                     return Error.UnexpectedType;
                 }
                 const index_identifier = index_expr.lhs.identifier;
@@ -464,7 +476,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.addInstruction(.{ .jump = MaxOffset });
                 try self.scope_context.addBreak(try self.getLastInstruction());
             } else {
-                self.report("break statement outside of loop", .{});
+                self.reportError("break statement outside of loop", .{});
                 return Error.UnsupportedStatement;
             }
         },
@@ -473,7 +485,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.addInstruction(.{ .jump = MaxOffset });
                 try self.scope_context.addContinue(try self.getLastInstruction());
             } else {
-                self.report("continue statement outside of loop", .{});
+                self.reportError("continue statement outside of loop", .{});
                 return Error.UnsupportedStatement;
             }
         },
@@ -490,7 +502,7 @@ inline fn resolveAssignToInstr(self: *Self, token_value: Token) Error!opcodes.In
         .modulo_assignment => .mod,
         .doublestar_assignment => .pow,
         inline else => {
-            self.report("Unsupported assignment type: {s}", .{token_value});
+            self.reportError("Unsupported assignment type: {s}", .{token_value});
             return error.UnsupportedStatement;
         },
     };
@@ -502,7 +514,7 @@ inline fn resolvePrefixToInstr(self: *Self, operator: ast.Operator) Error!opcode
         .minus => .neg,
         .not => .not,
         inline else => {
-            self.report("unexpected operator: {s}", .{operator});
+            self.reportError("unexpected operator: {s}", .{operator});
             return error.InvalidInstruction;
         },
     };
@@ -526,7 +538,7 @@ inline fn resolveInfixToInstr(self: *Self, operator: ast.Operator) Error!opcodes
         .@"and" => .@"and",
         .@"or" => .@"or",
         inline else => {
-            self.report("unexpected infix operator: {s}", .{operator});
+            self.reportError("unexpected infix operator: {s}", .{operator});
             return error.UnexpectedType;
         },
     };
@@ -811,7 +823,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             } });
         },
         inline else => {
-            self.report("Unsupported expression type: {s}", .{expression});
+            self.reportError("Unsupported expression type: {s}", .{expression});
             return error.UnsupportedExpression;
         },
     }

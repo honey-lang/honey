@@ -7,6 +7,8 @@ const PlayAgainMesage = "Would you like to play again? (y/n): ";
 
 let random = @rand(Min, Max);
 let guesses = 0;
+
+let random = "lol";
 while (true) {
     const number = @parse_number(@prompt(AskMessage));
     guesses += 1;

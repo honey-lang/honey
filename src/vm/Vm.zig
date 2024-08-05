@@ -135,6 +135,8 @@ options: VmOptions,
 pub const VmOptions = struct {
     /// If enabled, it will dump the bytecode into stderr before running the program
     dump_bytecode: bool = false,
+    /// The writer used for reporting errors
+    error_writer: std.io.AnyWriter,
 };
 
 /// Initializes the VM with the needed values
@@ -568,14 +570,14 @@ pub fn report(self: *Self, comptime fmt: []const u8, args: anytype) void {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn reportErrors(self: *Self, error_writer: std.fs.File.Writer) void {
+pub fn reportErrors(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
     for (self.diagnostics.errors.items, 0..) |msg, index| {
-        error_writer.print(" - {s}", .{msg}) catch unreachable;
+        self.options.error_writer.print(" - {s}", .{msg}) catch unreachable;
         if (index < self.diagnostics.errors.items.len) {
-            error_writer.print("\n", .{}) catch unreachable;
+            self.options.error_writer.print("\n", .{}) catch unreachable;
         }
     }
 }
@@ -855,9 +857,15 @@ inline fn nativeBoolToValue(value: bool) Value {
 
 test "ensure program results in correct value" {
     const ally = std.testing.allocator;
-    const result = try honey.compile(.{ .string = "1 + 2" }, .{ .allocator = ally, .error_writer = std.io.getStdErr().writer() });
+    const error_writer = std.io.getStdErr().writer().any();
+    const result = try honey.compile(.{ .string = "1 + 2" }, .{
+        .allocator = ally,
+        .error_writer = error_writer,
+    });
     defer result.deinit();
-    var vm = Self.init(result.data, ally, .{});
+    var vm = Self.init(result.data, ally, .{
+        .error_writer = error_writer,
+    });
     defer vm.deinit();
     try vm.run();
 

@@ -828,7 +828,7 @@ inline fn compileAndTest(source: []const u8, test_fn: *const fn (bytecode: Bytec
 
     const result = try honey.parse(.{ .string = source }, .{
         .allocator = ally,
-        .error_writer = std.io.getStdErr().writer(),
+        .error_writer = std.io.getStdErr().writer().any(),
     });
     defer result.deinit();
 
@@ -848,7 +848,7 @@ inline fn compileAndTestError(source: []const u8, test_fn: *const fn (bytecode_u
 
     const result = try honey.parse(.{ .string = source }, .{
         .allocator = ally,
-        .error_writer = std.io.getStdErr().writer(),
+        .error_writer = std.io.getStdErr().writer().any(),
     });
     defer result.deinit();
 
@@ -905,6 +905,7 @@ test "ensure compiler errors on reassignment of const variable" {
 test "test simple list compilation" {
     try compileAndTest("[1, 2, 3]", struct {
         fn run(bytecode: Bytecode) anyerror!void {
+            // lists are compiled in reverse order so they can be popped and appended correctly
             const expected_bytes = opcodes.make(&[_]Instruction{
                 .{ .@"const" = 0x00 },
                 .{ .@"const" = 0x01 },
@@ -913,7 +914,7 @@ test "test simple list compilation" {
                 .pop,
             });
             try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
-            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 }, .{ .number = 3 } }, bytecode.constants);
+            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 3 }, .{ .number = 2 }, .{ .number = 1 } }, bytecode.constants);
         }
     }.run);
 }
@@ -935,13 +936,13 @@ test "test simple list access compilation" {
                 .{ .list = 3 },
                 // const value = test[1];
                 .{ .get_local = 0 },
-                .{ .@"const" = 0x00 },
+                .{ .@"const" = 0x02 },
                 .get_index,
                 .pop,
                 .pop,
             });
             try std.testing.expectEqualSlices(u8, expected_bytes, bytecode.instructions);
-            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 1 }, .{ .number = 2 }, .{ .number = 3 } }, bytecode.constants);
+            try std.testing.expectEqualSlices(Value, &.{ .{ .number = 3 }, .{ .number = 2 }, .{ .number = 1 } }, bytecode.constants);
         }
     }.run);
 }

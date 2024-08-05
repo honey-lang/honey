@@ -77,20 +77,28 @@ const ErrorData = struct {
 const Self = @This();
 
 arena: std.heap.ArenaAllocator,
+/// The main data compiled from the lexer
+lex_data: Lexer.Data,
+/// A cursor that iterates through the tokens
 cursor: utils.Cursor(TokenData),
-stderr: std.fs.File.Writer,
+/// Spans that consist of the lines
+line_data: []const utils.Span,
+error_writer: std.io.AnyWriter,
 diagnostics: utils.Diagnostics,
 
 const ParserOptions = struct {
     ally: std.mem.Allocator,
+    error_writer: std.io.AnyWriter,
 };
 
 /// Initializes the parser.
-pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
+pub fn init(data: Lexer.Data, options: ParserOptions) Self {
     return .{
         .arena = std.heap.ArenaAllocator.init(options.ally),
-        .cursor = utils.Cursor(TokenData).init(tokens),
-        .stderr = std.io.getStdErr().writer(),
+        .lex_data = data,
+        .cursor = utils.Cursor(TokenData).init(data.tokens.items),
+        .line_data = data.line_data.items,
+        .error_writer = options.error_writer,
         .diagnostics = utils.Diagnostics.init(options.ally),
     };
 }
@@ -99,6 +107,7 @@ pub fn init(tokens: []const TokenData, options: ParserOptions) Self {
 pub fn deinit(self: *Self) void {
     self.arena.deinit();
     self.diagnostics.deinit();
+    self.lex_data.deinit();
 }
 
 pub fn allocator(self: *Self) std.mem.Allocator {
@@ -113,19 +122,46 @@ fn moveToHeap(self: *Self, value: anytype) ParserError!*@TypeOf(value) {
 }
 
 /// Reports any errors that have occurred during execution to stderr
-pub fn report(self: *Self, error_writer: std.fs.File.Writer) void {
+pub fn report(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
         return;
     }
-    error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
-    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
+    self.error_writer.print("Encountered the following errors during execution:\n", .{}) catch unreachable;
+    self.error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
     for (self.diagnostics.errors.items, 0..) |msg, index| {
-        error_writer.print(" - {s}", .{msg}) catch unreachable;
+        self.error_writer.print(" - {s}", .{msg}) catch unreachable;
         if (index < self.diagnostics.errors.items.len) {
-            error_writer.print("\n", .{}) catch unreachable;
+            self.error_writer.print("\n", .{}) catch unreachable;
         }
     }
-    error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
+    self.error_writer.print("--------------------------------------------------\n", .{}) catch unreachable;
+}
+
+/// Attempts to match a token to the line that it exists on
+pub fn findSpan(self: *Self, token_data: TokenData) ?utils.Span {
+    const result = std.sort.binarySearch(utils.Span, token_data.position, self.line_data, {}, struct {
+        pub fn find(_: void, key: utils.Span, mid_item: utils.Span) std.math.Order {
+            if (key.start >= mid_item.start and key.end <= mid_item.end) {
+                return .eq;
+            } else if (key.end < mid_item.start) {
+                return .lt;
+            }
+            return .gt;
+        }
+    }.find);
+    return if (result) |found| self.line_data[found] else null;
+}
+
+pub fn printUnderlinedToken(self: *Self, token_data: TokenData) !void {
+    const span = self.findSpan(token_data) orelse return error.NoSpanFound;
+
+    const padding = token_data.position.start - span.start;
+    _ = try self.error_writer.write(self.lex_data.getLineBySpan(span));
+    try self.error_writer.writeByte('\n');
+    // pad up to the token
+    try self.error_writer.writeByteNTimes(' ', padding);
+    // arrows to indicate token highlighted
+    try self.error_writer.writeByteNTimes('^', token_data.position.end - token_data.position.start + 1);
 }
 
 /// Parses the tokens into an AST.
@@ -663,18 +699,18 @@ fn peekPrecedence(self: *Self) ParserError!Precedence {
 fn parseAndExpect(input: []const u8, test_func: *const fn (*Program) anyerror!void) anyerror!void {
     const honey = @import("../honey.zig");
     const ally = std.testing.allocator;
-    const tokens = try honey.tokenize(input, ally);
-    defer ally.free(tokens);
-    var parser = init(tokens, .{ .ally = ally });
+    var data = try honey.tokenize(input, ally);
+    errdefer data.deinit();
+    var parser = init(data, .{
+        .ally = ally,
+        .error_writer = std.io.getStdErr().writer().any(),
+    });
     defer parser.deinit();
     var program = parser.parse() catch |err| {
-        parser.diagnostics.dump(std.io.getStdErr().writer());
+        parser.report();
         return err;
     };
     defer program.deinit();
-
-    // std.debug.print("Statement: {s}\n", .{program.statements.items[0]});
-
     try test_func(&program);
 }
 
@@ -885,9 +921,11 @@ test "test parsing simple for expression" {
             var block = ast.createBlockStatement(&[_]ast.Statement{
                 ast.createCallStatement("doSomething", &.{}, true),
             });
+
+            const capture_i = ast.Expression{ .identifier = "i" };
             const expected = ast.createForStatement(
                 &for_range,
-                "i",
+                &.{capture_i},
                 &block,
                 false,
             );
@@ -1002,4 +1040,28 @@ test "test parsing nested member indexing of dict expression" {
             try std.testing.expectEqualDeep(expected, statements[0]);
         }
     }.func);
+}
+
+test "test span finding" {
+    const honey = @import("../honey.zig");
+    const source =
+        \\const a = 1;
+        \\const b = true;
+        \\const c = "false";
+        \\const d = null;
+    ;
+    const ally = std.testing.allocator;
+    const data = try honey.tokenize(source, ally);
+    var parser = init(data, .{
+        .ally = ally,
+        .error_writer = std.io.getStdErr().writer().any(),
+    });
+    defer parser.deinit();
+
+    const true_token_data = data.tokens.items[8];
+    try std.testing.expectEqual(.true, true_token_data.token.tag());
+
+    const found_line_data = parser.findSpan(true_token_data);
+    try std.testing.expect(found_line_data != null);
+    try std.testing.expectEqualDeep(utils.Span{ .start = 13, .end = 28 }, found_line_data.?);
 }

@@ -168,6 +168,10 @@ pub const Token = union(TokenTag) {
     pipe,
     invalid: u8,
 
+    pub fn tag(self: Token) TokenTag {
+        return std.meta.activeTag(self);
+    }
+
     pub fn format(self: Token, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (self) {
             .number => |value| try writer.print("{{ .number = \"{s}\" }}", .{value}),
@@ -203,7 +207,7 @@ pub const Token = union(TokenTag) {
 
 pub const TokenData = struct {
     token: Token,
-    position: utils.Position,
+    position: utils.Span,
 
     pub fn create(token: Token, start: usize, end: usize) TokenData {
         return .{

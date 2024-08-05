@@ -1,10 +1,21 @@
-const Position = @import("Position.zig");
+const std = @import("std");
+
+pub const Span = struct {
+    /// The start of the span
+    start: usize,
+    /// The end of the span
+    end: usize,
+
+    pub fn format(self: Span, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{{ .start = {d}, .end = {d} }}", .{ self.start, self.end });
+    }
+};
 
 pub fn Cursor(comptime T: type) type {
     return struct {
         const Self = @This();
         const PredFn = *const fn (T) bool;
-        const ReadResult = struct { []const T, Position };
+        const ReadResult = struct { []const T, Span };
 
         input: []const T,
         index: usize,
@@ -93,9 +104,16 @@ pub fn Cursor(comptime T: type) type {
             return self.input[self.index..(self.index + amount)];
         }
 
+        /// Returns a slice of the input from the cursor position to the given amount
+        /// or null if the index + amount exceeds the bounds
         pub fn peekSliceOrNull(self: *Self, amount: usize) ?[]const T {
             if (self.index + amount > self.input.len) return null;
             return self.input[self.index..(self.index + amount)];
+        }
+
+        /// Slices the input given a start and end index
+        pub fn slice(self: *Self, start: usize, end: usize) []const T {
+            return self.input[start..end];
         }
 
         /// Returns true if the cursor is not at the end.

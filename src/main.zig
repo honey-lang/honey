@@ -78,7 +78,7 @@ pub fn main() !void {
 
     const result = try honey.run(input, .{
         .allocator = allocator,
-        .error_writer = std.io.getStdErr().writer(),
+        .error_writer = std.io.getStdErr().writer().any(),
         .dump_bytecode = res.args.@"dump-bytecode" == 1,
     });
     defer result.deinit();
@@ -102,7 +102,7 @@ fn runRepl(allocator: std.mem.Allocator) !void {
         // runInVm will print the error for us
         var result = honey.run(.{ .string = input }, .{
             .allocator = allocator,
-            .error_writer = std.io.getStdOut().writer(),
+            .error_writer = std.io.getStdOut().writer().any(),
         }) catch continue;
         defer result.deinit();
         if (result.data.getLastPopped()) |value| {

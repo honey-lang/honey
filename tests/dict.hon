@@ -1,6 +1,6 @@
 const language = {
     name: "honey",
-    version: "v0.1.0",
+    version: "v0.1.1",
     description: "A small embeddable scripting language, built in Zig",
     versions: [
         { version: "v0.0.1", description: "Initial release" },

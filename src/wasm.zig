@@ -116,8 +116,7 @@ export fn run(source: [*]u8, source_len: usize) usize {
         .writer = log_writer.any(),
     });
     vm.run() catch {
-        // vm.diagnostics.dump(error_writer.any());
-        // todo: error messages
+        vm.reportErrors();
         return 0;
     };
     defer vm.deinit();

@@ -38,7 +38,7 @@ pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
         .file => |file| try file.handle.readToEndAlloc(arena.allocator(), std.math.maxInt(usize)),
     };
 
-    const lex_data = try tokenize(input, arena.allocator(), source.file.name);
+    const lex_data = try tokenize(input, arena.allocator(), if (source == .file) source.file.name else null);
 
     var parser = Parser.init(lex_data, .{
         .ally = arena.allocator(),

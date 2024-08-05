@@ -121,6 +121,10 @@ fn moveToHeap(self: *Self, value: anytype) ParserError!*@TypeOf(value) {
     return ptr;
 }
 
+/// If there's more than 5 errors, we should stop reporting them to prevent
+/// spamming the user with errors that may be caused by a single issue.
+const MaxReportedErrors = 5;
+
 /// Reports any errors that have occurred during execution to stderr
 pub fn report(self: *Self) void {
     if (!self.diagnostics.hasErrors()) {
@@ -134,6 +138,9 @@ pub fn report(self: *Self) void {
         self.printErrorAtToken(token_datum, msg) catch unreachable;
         if (index < self.diagnostics.errors.len) {
             self.error_writer.writeByte('\n') catch unreachable;
+        }
+        if (index >= MaxReportedErrors) {
+            break;
         }
     }
 }

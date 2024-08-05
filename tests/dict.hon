@@ -4,12 +4,12 @@ const language = {
     description: "A small embeddable scripting language, built in Zig",
     versions: [
         { version: "v0.0.1", description: "Initial release" },
-        { version: "v0.1.0", description: "Added support for lists & dictionaries" ,
+        { version: "v0.1.0", description: "Added support for lists & dictionaries" },
     ],
 };
 
 // name: "honey"
-const name = language.name;
+const name = language.name
 // version: v0.1.0
 const version = language["version"];
 

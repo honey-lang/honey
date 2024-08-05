@@ -164,6 +164,7 @@ pub fn printErrorAtToken(self: *Self, token_data: TokenData, msg: []const u8) !v
 
     const column_index = token_data.position.start - line.start;
 
+    // todo: move to terminal
     // we offset the line & column by one for one-indexing
     try self.error_writer.print("[{s}:{d}:{d}] error: {s}\n", .{ self.lex_data.source_name, line_index + 1, column_index + 1, msg });
 
@@ -205,25 +206,27 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
         .@"return" => blk: {
             self.cursor.advance();
             if (self.currentIs(.semicolon)) {
-                try self.expectCurrentAndAdvance(.semicolon);
+                self.cursor.advance();
                 break :blk .{ .@"return" = .{ .expression = null } };
             }
             const expression = try self.parseExpression(.lowest);
-            try self.expectCurrentAndAdvance(.semicolon);
+            if (needs_terminated) {
+                try self.expectSemicolon();
+            }
             break :blk .{ .@"return" = .{ .expression = expression } };
         },
         .@"break" => blk: {
             self.cursor.advance();
-            if (self.currentIs(.semicolon)) {
-                try self.expectCurrentAndAdvance(.semicolon);
+            if (needs_terminated) {
+                try self.expectSemicolon();
             }
             // todo: break values
             break :blk .@"break";
         },
         .@"continue" => blk: {
             self.cursor.advance();
-            if (self.currentIs(.semicolon)) {
-                try self.expectCurrentAndAdvance(.semicolon);
+            if (needs_terminated) {
+                try self.expectSemicolon();
             }
             break :blk .@"continue";
         },
@@ -265,6 +268,22 @@ fn parseStatement(self: *Self, needs_terminated: bool) ParserError!?Statement {
     };
 }
 
+/// Reports an error if a semi-colon is missing
+fn expectSemicolon(self: *Self) ParserError!void {
+    if (self.currentIs(.semicolon)) {
+        self.cursor.advance();
+        return;
+    }
+
+    // todo: is there a better way to implement this?
+    const prev = self.cursor.previous().?;
+    self.diagnostics.report("expected ';' after statement", .{}, .{
+        .token = prev.token,
+        .position = .{ .start = prev.position.end + 1, .end = prev.position.end + 1 },
+    });
+    return ParserError.UnexpectedToken;
+}
+
 /// Parses a let/const statement.
 /// let x: int = 5; OR const x = 5;
 fn parseVarDeclaration(self: *Self) ParserError!Statement {
@@ -287,7 +306,7 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
     self.cursor.advance();
 
     const expression = try self.parseExpression(.lowest);
-    try self.expectCurrentAndAdvance(.semicolon);
+    try self.expectSemicolon();
     return .{ .variable = .{
         .kind = kind_token,
         .name = identifier_token.identifier,
@@ -306,7 +325,7 @@ fn parseAssignmentStatement(self: *Self, lhs: Expression, needs_terminated: bool
     }
     const rhs = try self.parseExpression(.lowest);
     if (needs_terminated) {
-        try self.expectCurrentAndAdvance(.semicolon);
+        try self.expectSemicolon();
     }
 
     // std.debug.print("Assignment: {s} {s} {s}\n", .{ lhs, assignment_token_data.token, rhs });
@@ -683,6 +702,7 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
         return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
+        // todo: we should
         self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() }, self.cursor.current());
         return ParserError.ExpectedCurrentMismatch;
     }

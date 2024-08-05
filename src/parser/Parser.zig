@@ -595,7 +595,7 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
             break :blk parsed;
         },
         inline else => {
-            self.diagnostics.report("no prefix parse rule for token: {}", .{current.token}, self.cursor.current());
+            self.diagnostics.report("unable to parse '{s}' as prefix", .{current.token}, current);
             return ParserError.NoPrefixParseRule;
         },
     };
@@ -705,12 +705,12 @@ inline fn peekIs(self: *Self, tag: TokenTag) bool {
 /// Throws an error if the current token is not the expected tag.
 fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
     if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected current token: {} but got EOF", .{tag}, self.cursor.current());
+        self.diagnostics.report("expected '{s}' but got EOF", .{tag.name()}, self.cursor.current());
         return ParserError.UnexpectedEOF;
     }
     if (!self.currentIs(tag)) {
         // todo: we should
-        self.diagnostics.report("expected current token: {} but got: {}", .{ tag, self.currentToken() }, self.cursor.current());
+        self.diagnostics.report("expected '{s}' but got '{s}'", .{ tag.name(), self.currentToken() }, self.cursor.current());
         return ParserError.ExpectedCurrentMismatch;
     }
     self.cursor.advance();
@@ -718,12 +718,12 @@ fn expectCurrentAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
 
 /// Throws an error if the current token is not the expected tag.
 fn expectPeekAndAdvance(self: *Self, tag: TokenTag) ParserError!void {
-    if (!self.cursor.canRead()) {
-        self.diagnostics.report("expected peek token: {} but got EOF", .{tag}, self.cursor.current());
+    const peek = self.cursor.peek() orelse {
+        self.diagnostics.report("expected token '{s}' but got EOF", .{tag.name()}, self.cursor.current());
         return ParserError.UnexpectedEOF;
-    }
+    };
     if (!self.peekIs(tag)) {
-        self.diagnostics.report("expected peek token: {} but got: {?}", .{ tag, self.peekToken() catch null }, self.cursor.current());
+        self.diagnostics.report("expected token: '{s}' but got '{s}'", .{ tag.name(), peek }, peek);
         return ParserError.ExpectedPeekMismatch;
     }
     self.cursor.advance();

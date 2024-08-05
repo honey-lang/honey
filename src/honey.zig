@@ -7,24 +7,26 @@ pub const Compiler = @import("compiler/Compiler.zig");
 pub const Bytecode = @import("compiler/Bytecode.zig");
 pub const Vm = @import("vm/Vm.zig");
 
-pub const version = "0.0.1";
+pub const version = "0.1.1";
 
-pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) ![]const TokenData {
-    var lexer = Lexer.init(input, allocator);
+pub fn tokenize(input: []const u8, allocator: std.mem.Allocator, source_name: ?[]const u8) Lexer.Data.Error!Lexer.Data {
+    var lexer = Lexer.init(input, allocator, source_name);
     errdefer lexer.deinit();
-    _ = try lexer.readAll();
-    return try lexer.tokens.toOwnedSlice();
+    return lexer.readAll();
 }
 
 /// The source of the input to be parsed.
 pub const Source = union(enum) {
-    file: std.fs.File,
+    file: struct {
+        name: []const u8,
+        handle: std.fs.File,
+    },
     string: []const u8,
 };
 
 pub const ParseOptions = struct {
     allocator: std.mem.Allocator,
-    error_writer: std.fs.File.Writer,
+    error_writer: std.io.AnyWriter,
 };
 
 pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
@@ -33,27 +35,31 @@ pub fn parse(source: Source, options: ParseOptions) !Result(ast.Program) {
 
     const input: []const u8 = switch (source) {
         .string => |string| string,
-        .file => |file| try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize)),
+        .file => |file| try file.handle.readToEndAlloc(arena.allocator(), std.math.maxInt(usize)),
     };
-    const tokens = try tokenize(input, arena.allocator());
 
-    var parser = Parser.init(tokens, .{ .ally = arena.allocator() });
+    const lex_data = try tokenize(input, arena.allocator(), if (source == .file) source.file.name else null);
+
+    var parser = Parser.init(lex_data, .{
+        .ally = arena.allocator(),
+        .error_writer = options.error_writer,
+    });
     defer parser.deinit();
 
-    const data = parser.parse() catch |err| {
-        parser.report(options.error_writer);
+    const parsed_data = parser.parse() catch |err| {
+        parser.report();
         return err;
     };
 
     return Result(ast.Program){
-        .data = data,
+        .data = parsed_data,
         .arena = arena,
     };
 }
 
 pub const CompileOptions = struct {
     allocator: std.mem.Allocator,
-    error_writer: std.fs.File.Writer,
+    error_writer: std.io.AnyWriter,
 };
 
 pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
@@ -64,9 +70,9 @@ pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
     var arena = result.arena;
     var compiler = Compiler.init(arena.allocator(), result.data);
 
-    const program = compiler.compile() catch |err| {
-        compiler.diagnostics.dump(options.error_writer);
-        return err;
+    const program = compiler.compile() catch {
+        // compiler.diagnostics.dump(options.error_writer);
+        @panic("need to dump error here");
     };
 
     return Result(Bytecode){
@@ -77,7 +83,7 @@ pub fn compile(source: Source, options: CompileOptions) !Result(Bytecode) {
 
 pub const RunOptions = struct {
     allocator: std.mem.Allocator,
-    error_writer: std.fs.File.Writer,
+    error_writer: std.io.AnyWriter,
     dump_bytecode: bool = false,
 };
 
@@ -91,9 +97,10 @@ pub fn run(source: Source, options: RunOptions) !Result(Vm) {
     var arena = std.heap.ArenaAllocator.init(options.allocator);
     var vm = Vm.init(result.data, arena.allocator(), .{
         .dump_bytecode = options.dump_bytecode,
+        .error_writer = options.error_writer,
     });
     vm.run() catch |err| {
-        vm.reportErrors(options.error_writer);
+        vm.reportErrors();
         return err;
     };
     return Result(Vm){ .data = vm, .arena = arena };

@@ -1,0 +1,3 @@
+[submodule "src/playground"]
+	path = src/playground
+	url = ssh://git@github.com/honey-lang/playground.git

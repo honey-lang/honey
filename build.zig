@@ -1,22 +1,22 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     // create exports for the wasm target
     if (target.result.isWasm()) {
-        const lib = b.addSharedLibrary(.{
+        const exe = b.addExecutable(.{
             .name = "honey",
             .root_source_file = b.path("src/wasm.zig"),
             .target = target,
             .optimize = .ReleaseSmall,
             .version = .{ .major = 0, .minor = 1, .patch = 1 },
         });
-        // used to ensure exports
-        lib.rdynamic = true;
+        exe.rdynamic = true;
+        exe.entry = .disabled;
 
-        const install = b.addInstallArtifact(lib, .{});
-        install.step.dependOn(&lib.step);
+        const install = b.addInstallArtifact(exe, .{});
+        install.step.dependOn(&exe.step);
         b.default_step.dependOn(&install.step);
         return;
     }
@@ -81,4 +81,26 @@ pub fn build(b: *std.Build) void {
     const run_generate_md = b.addRunArtifact(generate_md);
     const generate_md_step = b.step("generate", "Generates markdown documentation for the compiler");
     generate_md_step.dependOn(&run_generate_md.step);
+
+    const wasm_target = try std.Build.parseTargetQuery(.{ .arch_os_abi = "wasm32-freestanding" });
+    const playground_exe = b.addExecutable(.{
+        .name = "honey",
+        .root_source_file = b.path("src/wasm.zig"),
+        .target = b.resolveTargetQuery(wasm_target),
+        .optimize = .ReleaseSmall,
+        .version = .{ .major = 0, .minor = 1, .patch = 0 },
+    });
+    playground_exe.rdynamic = true;
+    playground_exe.entry = .disabled;
+
+    const playground_install = b.addInstallArtifact(playground_exe, .{
+        .dest_dir = .{ .override = .{ .custom = "../src/playground/src/assets" } },
+    });
+    playground_install.step.dependOn(&playground_exe.step);
+
+    const run_bun = b.addSystemCommand(&.{ "bun", "run", "--cwd", "./src/playground", "dev" });
+
+    const playground_step = b.step("playground", "Builds the WASM library and runs the playground");
+    run_bun.step.dependOn(&playground_install.step);
+    playground_step.dependOn(&run_bun.step);
 }

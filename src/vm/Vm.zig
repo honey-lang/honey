@@ -132,13 +132,15 @@ active_iterator_stack: utils.Stack(Iterator),
 active_iterator_index: ?usize = null,
 /// The virtual machine options
 options: VmOptions,
+/// The writer to use for output and debugging
+writer: std.io.AnyWriter,
 
 /// The options for the virtual machine
 pub const VmOptions = struct {
     /// If enabled, it will dump the bytecode into stderr before running the program
     dump_bytecode: bool = false,
-    /// The writer used for reporting errors
-    error_writer: std.io.AnyWriter,
+    /// The writer used for output and debugging
+    writer: std.io.AnyWriter,
 };
 
 /// Initializes the VM with the needed values
@@ -153,6 +155,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .stack = utils.Stack(Value).init(ally),
         .active_iterator_stack = utils.Stack(Iterator).init(ally),
         .options = options,
+        .writer = options.writer,
     };
     self.addBuiltinLibrary(@import("../builtins.zig"));
     return self;
@@ -245,10 +248,9 @@ pub fn getLastPopped(self: *Self) ?Value {
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
     if (self.options.dump_bytecode) {
-        const writer = std.io.getStdErr().writer();
-        writer.writeAll("------------ Bytecode ------------\n") catch unreachable;
-        self.bytecode.dump(writer) catch unreachable;
-        writer.writeAll("----------------------------------\n") catch unreachable;
+        self.writer.writeAll("------------ Bytecode ------------\n") catch unreachable;
+        self.bytecode.dump(self.writer) catch unreachable;
+        self.writer.writeAll("----------------------------------\n") catch unreachable;
     }
     while (self.running and self.program_counter < self.bytecode.instructions.len) {
         const pc = self.program_counter;
@@ -511,10 +513,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.report("Builtin not found: @{s}", .{builtin.identifier});
                 return VmError.GenericError;
             };
-            const output = run_func(self, args) catch |err| {
-                self.report("Failed to run builtin function: {any}", .{err});
-                return VmError.GenericError;
-            };
+            const output = run_func(self, args) catch return VmError.GenericError;
             try self.pushOrError(if (output) |value| value else Value.Void);
         },
         .iterable_begin => {
@@ -584,9 +583,9 @@ pub fn reportErrors(self: *Self) void {
     }
     const msg_data = self.diagnostics.errors.items(.msg);
     for (msg_data, 0..) |msg, index| {
-        self.options.error_writer.print(" - {s}", .{msg}) catch unreachable;
+        self.options.writer.print(" - {s}", .{msg}) catch unreachable;
         if (index < msg_data.len) {
-            self.options.error_writer.print("\n", .{}) catch unreachable;
+            self.options.writer.print("\n", .{}) catch unreachable;
         }
     }
 }

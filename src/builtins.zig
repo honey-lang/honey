@@ -2,15 +2,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
-// const Evaluator = @import("evaluator/Evaluator.zig");
 const Value = @import("compiler/value.zig").Value;
 const Vm = @import("vm/Vm.zig");
 
+const wasm = @import("wasm.zig");
+
 pub fn rand(_: *Vm, args: []const Value) !?Value {
-    var prng = std.rand.DefaultPrng.init(blk: {
+    var prng = std.rand.Xoshiro256.init(if (builtin.target.isWasm()) wasm: {
+        const seed = wasm.generateSeed();
+        break :wasm seed;
+    } else posix: {
         var seed: u64 = undefined;
         std.posix.getrandom(std.mem.asBytes(&seed)) catch return error.GetRandomFailed;
-        break :blk seed;
+        break :posix seed;
     });
     const random = prng.random();
     const result = random.float(f64);
@@ -37,10 +41,13 @@ pub fn rand(_: *Vm, args: []const Value) !?Value {
         else => error.InvalidNumberOfArguments,
     };
 }
-
 pub fn print(_: *Vm, args: []const Value) !?Value {
-    const stderr = std.io.getStdErr();
-    var buf = std.io.bufferedWriter(stderr.writer());
+    var under_writer = if (builtin.target.isWasm()) blk: {
+        break :blk wasm.LogWriter{};
+    } else blk: {
+        break :blk std.io.getStdErr().writer();
+    };
+    var buf = std.io.bufferedWriter(under_writer.any());
     const writer = buf.writer();
     for (args) |arg| {
         switch (arg) {
@@ -53,8 +60,12 @@ pub fn print(_: *Vm, args: []const Value) !?Value {
 }
 
 pub fn println(_: *Vm, args: []const Value) !?Value {
-    const stderr = std.io.getStdErr();
-    var buf = std.io.bufferedWriter(stderr.writer());
+    var under_writer = if (builtin.target.isWasm()) blk: {
+        break :blk wasm.LogWriter{};
+    } else blk: {
+        break :blk std.io.getStdErr().writer();
+    };
+    var buf = std.io.bufferedWriter(under_writer.any());
     const writer = buf.writer();
     for (args) |arg| {
         switch (arg) {
@@ -70,6 +81,7 @@ pub fn println(_: *Vm, args: []const Value) !?Value {
 /// Returns the name of the operating system.
 pub fn os(vm: *Vm, args: []const Value) !?Value {
     if (args.len != 0) {
+        vm.report("os: expected 0 arguments, got {}", .{args.len});
         return error.InvalidNumberOfArguments;
     }
 
@@ -80,30 +92,36 @@ pub fn os(vm: *Vm, args: []const Value) !?Value {
 const MaxBufferSize = 1024;
 /// Prints a given message and then prompts the user for input using stdin.
 pub fn prompt(vm: *Vm, args: []const Value) !?Value {
-    const stderr = std.io.getStdErr().writer();
     if (args.len != 1 or args[0] != .string) {
         return null;
     }
-
     const msg = args[0].string;
-    stderr.print("{s}", .{msg}) catch return error.PrintFailed;
 
-    // create a prompt buffer & a related stream
-    var prompt_buf: [MaxBufferSize]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&prompt_buf);
+    if (!builtin.target.isWasm()) {
+        const stderr = std.io.getStdErr().writer();
+        stderr.print("{s}", .{msg}) catch return error.PrintFailed;
 
-    // stream the prompt message to stdin
-    const stdin = std.io.getStdIn().reader();
-    stdin.streamUntilDelimiter(stream.writer(), '\n', MaxBufferSize) catch |err| switch (err) {
-        error.StreamTooLong => return error.PromptTooLong,
-        else => return error.PromptFailed,
-    };
+        // create a prompt buffer & a related stream
+        var prompt_buf: [MaxBufferSize]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&prompt_buf);
 
-    // trim the prompt buffer of CRLF
-    const trimmed = std.mem.trim(u8, stream.getWritten(), "\r\n");
+        // stream the prompt message to stdin
+        const stdin = std.io.getStdIn().reader();
+        stdin.streamUntilDelimiter(stream.writer(), '\n', MaxBufferSize) catch |err| switch (err) {
+            error.StreamTooLong => return error.PromptTooLong,
+            else => return error.PromptFailed,
+        };
 
-    // create a new string within the evaluator's arena and return it
-    return try vm.createString(trimmed);
+        // trim the prompt buffer of CRLF
+        const trimmed = std.mem.trim(u8, stream.getWritten(), "\r\n");
+
+        // create a new string within the evaluator's arena and return it
+        return try vm.createString(trimmed);
+    } else {
+        const result = wasm.honeyPrompt(MaxBufferSize, "{s}", .{msg}) catch return error.PromptFailed;
+        defer wasm.deallocU8(result);
+        return try vm.createString(result[0..std.mem.len(result)]);
+    }
 }
 
 pub fn parse_number(_: *Vm, args: []const Value) !?Value {

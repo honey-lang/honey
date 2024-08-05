@@ -1,5 +1,5 @@
 benchmarks/
 .zig-cache/
 zig-out/
-playground/
 .vscode/
+node_modules/

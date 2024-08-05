@@ -284,9 +284,14 @@ fn expectSemicolon(self: *Self) ParserError!void {
 
     // todo: is there a better way to implement this?
     const prev = self.cursor.previous().?;
+
+    var position = prev.position.clone();
+    _ = position.offset(1);
+    _ = position.moveToEnd();
     self.diagnostics.report("expected ';' after statement", .{}, .{
         .token = prev.token,
-        .position = prev.position.offset(1),
+        // offset by 1 and move
+        .position = position,
     });
     return ParserError.UnexpectedToken;
 }

@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/wasm.zig"),
             .target = target,
             .optimize = .ReleaseSmall,
-            .version = .{ .major = 0, .minor = 1, .patch = 0 },
+            .version = .{ .major = 0, .minor = 1, .patch = 1 },
         });
         // used to ensure exports
         lib.rdynamic = true;

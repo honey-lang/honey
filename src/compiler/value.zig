@@ -235,4 +235,12 @@ pub const Value = union(enum) {
             inline else => try writer.print("{s}", .{@tagName(self)}),
         }
     }
+
+    /// Returns the name of the type associated with the value
+    pub fn typeName(self: Value) []const u8 {
+        return switch (self) {
+            // todo: return class names
+            inline else => @tagName(self),
+        };
+    }
 };

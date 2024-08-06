@@ -81,7 +81,7 @@ pub fn println(_: *Vm, args: []const Value) !?Value {
 /// Returns the name of the operating system.
 pub fn os(vm: *Vm, args: []const Value) !?Value {
     if (args.len != 0) {
-        vm.reportError("os: expected 0 arguments, got {}", .{args.len});
+        vm.reportError("os: expected 0 arguments but got {}", .{args.len});
         return error.InvalidNumberOfArguments;
     }
 
@@ -170,4 +170,18 @@ pub fn memory(vm: *Vm, args: []const Value) !?Value {
 
     // todo: implement memory
     return .{ .number = 0 };
+}
+
+/// Returns the name of the type associated with the value
+pub fn @"type"(vm: *Vm, args: []const Value) !?Value {
+    if (args.len != 1) {
+        vm.reportError("type: expected 1 argument but got {}", .{args.len});
+        return error.InvalidNumberOfArguments;
+    }
+
+    const arg = args[0];
+
+    // we don't need to allocate a string at the moment
+    // because all type names are embedded into the program
+    return Value{ .string = arg.typeName() };
 }

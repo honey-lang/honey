@@ -17,6 +17,10 @@ const CompiledInstruction = struct {
     /// The index that the compiled instruction resides at in the bytecode
     index: usize,
 
+    pub fn endIndex(self: CompiledInstruction) usize {
+        return self.index + self.opcode.width();
+    }
+
     /// Returns the index of the (potential) next instruction given its index and its size
     pub fn nextInstructionIndex(self: CompiledInstruction) usize {
         return self.index + self.opcode.size();
@@ -112,11 +116,11 @@ const ScopeContext = struct {
     /// Patches all break and continue statements with the correct offsets
     pub fn patchLoop(self: *ScopeContext, compiler: *Self, post_loop_expr: CompiledInstruction, loop_end: CompiledInstruction) !void {
         for (self.break_statements.items) |instr| {
-            try compiler.replace(instr, .{ .jump = @intCast(loop_end.nextInstructionIndex() - instr.index) });
+            try compiler.replace(instr, .{ .jump = @intCast(loop_end.endIndex() - instr.index) });
         }
 
         for (self.continue_statements.items) |instr| {
-            try compiler.replace(instr, .{ .jump = @intCast(post_loop_expr.nextInstructionIndex() - instr.nextInstructionIndex()) });
+            try compiler.replace(instr, .{ .jump = @intCast(post_loop_expr.endIndex() - instr.nextInstructionIndex()) });
         }
     }
 
@@ -581,26 +585,25 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.compileExpression(condition_data.condition.*);
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
             jif_instr = try self.getLastInstruction();
+            const jif_offset_start = self.instructions.items.len;
 
             // compile body & add jump after the body
             try self.compileIfBody(condition_data.body);
             try self.addInstruction(.{ .jump = MaxOffset });
+            const jfwd_offset_start = self.instructions.items.len;
             jump_instr = try self.getLastInstruction();
 
+            const jif_offset_end = self.instructions.items.len;
             // if there's an else block, compile it. otherwise, just add a void instruction
             if (inner.alternative) |alternative| {
                 try self.compileIfBody(alternative);
             } else {
                 try self.addInstruction(.void);
             }
-            const post_expr = try self.getLastInstruction();
+            const jfwd_offset_end = self.instructions.items.len;
 
-            try self.replace(jump_instr, .{
-                .jump = @intCast(post_expr.nextInstructionIndex() - jump_instr.nextInstructionIndex()),
-            });
-            try self.replace(jif_instr, .{
-                .jump_if_false = @intCast(jump_instr.index - jif_instr.index),
-            });
+            try self.replace(jif_instr, .{ .jump_if_false = @intCast(jif_offset_end - jif_offset_start) });
+            try self.replace(jump_instr, .{ .jump = @intCast(jfwd_offset_end - jfwd_offset_start) });
         },
         .while_expr => |inner| {
             var jif_target: CompiledInstruction = undefined;

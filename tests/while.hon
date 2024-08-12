@@ -1,0 +1,17 @@
+let random = @rand(1, 100);
+let guesses = 0;
+while (true) {
+    const number = @parse_number(@prompt("Guess a number: "));
+    guesses += 1;
+    if (number > random) {
+        @println("Lower!");
+        continue;
+    } else if (number < random) {
+        @println("Higher!");
+        continue;
+    }
+    
+    @println("Congratulations! You guessed the number! The number was ", random, "!");
+    @println("Guesses: ", guesses);
+    break;
+}

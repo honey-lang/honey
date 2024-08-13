@@ -13,8 +13,8 @@ const allocator = std.heap.wasm_allocator;
 /// A small buffer to hold a formatted string of the last popped value.
 export var last_popped: [1024]u8 = undefined;
 
-/// A generic writer used to wrap external console.* functions.
-pub fn ConsoleWriter(comptime log_func: *const fn (msg: [*]const u8, len: usize) callconv(.C) void) type {
+/// A generic writer used to wrap external JS functions.
+pub fn JsWriter(comptime log_func: *const fn (msg: [*]const u8, len: usize) callconv(.C) void) type {
     return struct {
         const Self = @This();
 
@@ -31,8 +31,8 @@ pub fn ConsoleWriter(comptime log_func: *const fn (msg: [*]const u8, len: usize)
                 .context = self,
                 .writeFn = struct {
                     pub fn write(context: *const anyopaque, bytes: []const u8) !usize {
-                        var log_writer: *const LogWriter = @ptrCast(@alignCast(context));
-                        return try log_writer.write(bytes);
+                        var writer: *const Self = @ptrCast(@alignCast(context));
+                        return try writer.write(bytes);
                     }
                 }.write,
             };
@@ -46,11 +46,14 @@ extern fn js_log(msg: [*]const u8, len: usize) void;
 extern fn js_error(msg: [*]const u8, len: usize) void;
 /// A function exported by JS to prompt the user for input.
 extern fn js_prompt(msg: [*]const u8, len: usize) [*:0]u8;
+/// A function exported by JS to display an alert message.
+extern fn js_alert(msg: [*]const u8, len: usize) void;
 /// A function exported by JS to generate random bytes.
 extern fn js_random_bytes(len: usize) [*]u8;
 
-pub const LogWriter = ConsoleWriter(js_log);
-pub const ErrorWriter = ConsoleWriter(js_error);
+pub const LogWriter = JsWriter(js_log);
+pub const ErrorWriter = JsWriter(js_error);
+pub const AlertWriter = JsWriter(js_alert);
 
 /// Logs a message using the JS `console.log` function.
 pub fn honeyLog(comptime fmt: []const u8, args: anytype) !void {
@@ -59,7 +62,7 @@ pub fn honeyLog(comptime fmt: []const u8, args: anytype) !void {
 }
 
 /// Logs an error message using the JS `console.error` function.
-pub fn honeyError(comptime fmt: []const u8, args: anytype) void {
+pub fn honeyError(comptime fmt: []const u8, args: anytype) !void {
     var error_writer = ErrorWriter{};
     try error_writer.any().print(fmt, args);
 }
@@ -69,6 +72,16 @@ pub fn honeyPrompt(comptime buf_size: usize, comptime fmt: []const u8, args: any
     var buf: [buf_size]u8 = undefined;
     const fmted = try std.fmt.bufPrint(&buf, fmt, args);
     return js_prompt(fmted.ptr, fmted.len);
+}
+
+/// Displays an alert message using the JS `alert` function.
+pub fn honeyAlert(comptime buf_size: usize, comptime fmt: []const u8, args: anytype) !void {
+    var buf: [buf_size]u8 = undefined;
+    const fmted = std.fmt.bufPrint(&buf, fmt, args) catch |err| {
+        try honeyError("Error formatting alert message: {!}\n", .{err});
+        return;
+    };
+    js_alert(fmted.ptr, fmted.len);
 }
 
 const SeedType = u64;

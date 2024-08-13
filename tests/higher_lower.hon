@@ -1,29 +1,21 @@
-const Min = 1;
-const Max = 100;
-
-const AskMessage = "Guess a number: ";
-const PlayAgainMesage = "Would you like to play again? (y/n): ";
-
-
-let random = @rand(Min, Max);
+let random = @rand(1, 100);
 let guesses = 0;
 
-let random = "lol";
-while (true) {
-    const number = @parse_number(@prompt(AskMessage));
-    guesses += 1;
-
+let playing = true;
+while (playing): (guesses += 1) {
+    const number = @parse_number(@prompt("Guess a number: "));
     if (number > random) {
         @println("Lower!");
+        continue;
     } else if (number < random) {
         @println("Higher!");
-    } else {
-        @println("Correct! The number was: ", random);
-        @println("Guesses: ", guesses);
-
-        const play_again = @prompt(PlayAgainMesage) == "y";
-        if (!play_again) {
-            break;
-        }
+        continue;
     }
+    
+    @println("Congratulations! You guessed the number! The number was ", random, "!");
+    @println("Guesses: ", guesses);
+    
+    playing = @prompt("Do you want to play again? (y/n): ") == "y";
+    random = @rand(1, 100);
+    guesses = 0;
 }

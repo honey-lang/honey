@@ -11,6 +11,11 @@ const Bytecode = @import("../compiler/Bytecode.zig");
 const Value = @import("../compiler/value.zig").Value;
 
 const Self = @This();
+/// The built-in functions for the VM
+const BuiltinLibrary = if (@import("builtin").target.isWasm())
+    @import("../wasm_builtins.zig")
+else
+    @import("../builtins.zig");
 
 const HexFormat = "0x{x:0<2}";
 
@@ -157,7 +162,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .options = options,
         .writer = options.writer,
     };
-    self.addBuiltinLibrary(@import("../builtins.zig"));
+    self.addBuiltinLibrary(BuiltinLibrary);
     return self;
 }
 

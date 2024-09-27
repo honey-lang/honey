@@ -42,6 +42,8 @@ pub const TokenTag = enum {
     @"or",
     /// .and represents the keyword 'and'
     @"and",
+    /// .asm represents the keyword 'asm'
+    @"asm",
     /// .equal represents the characters '=='
     equal,
     /// .not_equal represents the characters '!='
@@ -172,6 +174,7 @@ pub const Token = union(TokenTag) {
     null,
     @"or",
     @"and",
+    @"asm",
     equal,
     not_equal,
     greater_than,

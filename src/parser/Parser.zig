@@ -181,10 +181,12 @@ pub fn printErrorAtToken(self: *Self, token_data: TokenData, msg: []const u8) !v
     try self.error_writer.writeByte('\n');
 
     try self.error_writer.writeByte('\t');
+    // todo: this should never occur!
+    if (token_data.position.start > token_data.position.end) return;
+
     // pad up to the token
     try self.error_writer.writeByteNTimes(' ', column_index);
     // arrows to indicate token highlighted
-
     const token_len = token_data.position.end - token_data.position.start;
     try self.error_writer.writeByteNTimes('~', token_len + 1);
 }

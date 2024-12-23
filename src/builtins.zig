@@ -1,12 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const honey = @import("../honey.zig");
+const honey = @import("honey.zig");
 const ast = @import("../parser/ast.zig");
 const Value = @import("compiler/value.zig").Value;
 const Vm = @import("vm/Vm.zig");
 const utils = @import("utils/utils.zig");
 
 const wasm = @import("wasm.zig");
+
+pub const HONEY_VERSION = honey.version;
 
 pub fn rand(_: *Vm, args: []const Value) !?Value {
     var prng = std.rand.Xoshiro256.init(if (builtin.target.isWasm()) wasm: {

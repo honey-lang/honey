@@ -162,7 +162,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .options = options,
         .writer = options.writer,
     };
-    self.addBuiltinLibrary(BuiltinLibrary);
+    self.addBuiltinLibrary(BuiltinLibrary) catch unreachable;
     return self;
 }
 
@@ -228,21 +228,37 @@ pub fn createString(self: *Self, value: []const u8) !Value {
 
 /// Adds all public functions from the import as a built-in library
 /// All built-ins are represented as a top-level call (e.g., `pub fn print` turns into `@print`)
-pub fn addBuiltinLibrary(self: *Self, comptime import: type) void {
+pub fn addBuiltinLibrary(self: *Self, comptime import: type) VmError!void {
     const decls = @typeInfo(import).Struct.decls;
     inline for (decls) |decl| {
         const DeclType = @TypeOf(@field(import, decl.name));
         const decl_type_info = @typeInfo(DeclType);
-        // validate that the declaration is a function
-        // todo: we can use this for mapping native functions to a call in the VM
-        // to do so, we'll inspect the params of the function and generate a new function that takes a slice of values,
-        // maps them to the correct types, and then calls the native function
-        // e.g., pub fn print(data: []const u8) will turn into a function with the parameters (vm: *Vm, args: []const Value)
-        if (decl_type_info != .Fn) {
+        const field = @field(import, decl.name);
+        if (decl_type_info == .Fn) {
+            // validate that the declaration is a function
+            // todo: we can use this for mapping native functions to a call in the VM
+            // to do so, we'll inspect the params of the function and generate a new function that takes a slice of values,
+            // maps them to the correct types, and then calls the native function
+            // e.g., pub fn print(data: []const u8) will turn into a function with the parameters (vm: *Vm, args: []const Value)
+            self.builtins.put(decl.name, @field(import, decl.name)) catch return VmError.OutOfMemory;
             continue;
         }
-        self.builtins.put(decl.name, @field(import, decl.name)) catch unreachable;
+        const value: Value = switch (decl_type_info) {
+            .Int, .ComptimeInt => .{ .number = @as(f64, @floatFromInt(field)) },
+            .Float, .ComptimeFloat => .{ .number = field },
+            .Bool => .{ .boolean = field },
+            // if we encounter a string slice, add it to our declared list
+            .Pointer => |inner| if (inner.size == .One) .{ .string = field } else continue,
+            .Null => .null,
+            // not a value we can convert into our internal representation
+            inline else => continue,
+        };
+        self.global_constants.put(decl.name, value) catch return VmError.OutOfMemory;
     }
+}
+
+pub fn declareGlobal(self: *Self, name: []const u8, value: Value) VmError!void {
+    return self.global_constants.put(name, value) catch VmError.OutOfMemory;
 }
 
 /// Returns the last value popped from the stack

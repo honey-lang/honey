@@ -283,7 +283,7 @@ fn readNumberlike(self: *Self) ?TokenData {
         switch (self.cursor.current()) {
             // if we encounter a dot, we need to check if it's a decimal point or a range operator
             '.' => if (self.cursor.peek() == '.') break,
-            '0'...'9', '_' => {},
+            '0'...'9', '_', 'b', 'x', 'o' => {},
             inline else => break,
         }
     }

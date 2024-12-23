@@ -593,8 +593,9 @@ fn parseExpressionAsPrefix(self: *Self) ParserError!Expression {
             const rhs = try self.moveToHeap(parsed);
             break :blk .{ .prefix = .{ .operator = operator, .rhs = rhs } };
         },
-        .number => |inner| .{
-            .number = std.fmt.parseFloat(f64, inner) catch return ParserError.NumberParseFailure,
+        .number => |inner| blk: {
+            const number = utils.parseNumberlike(inner) catch return ParserError.NumberParseFailure;
+            break :blk .{ .number = number };
         },
         .string => |inner| .{ .string = inner },
         .true => .{ .boolean = true },

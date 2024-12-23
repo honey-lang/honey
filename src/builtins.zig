@@ -4,6 +4,7 @@ const honey = @import("../honey.zig");
 const ast = @import("../parser/ast.zig");
 const Value = @import("compiler/value.zig").Value;
 const Vm = @import("vm/Vm.zig");
+const utils = @import("utils/utils.zig");
 
 const wasm = @import("wasm.zig");
 
@@ -130,7 +131,7 @@ pub fn parse_number(_: *Vm, args: []const Value) !?Value {
     }
 
     const str = args[0].string;
-    const number = std.fmt.parseFloat(f64, str) catch return error.ParseFailed;
+    const number = utils.parseNumberlike(str) catch return error.ParseFailed;
     return .{ .number = number };
 }
 

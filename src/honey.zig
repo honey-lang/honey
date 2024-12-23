@@ -7,7 +7,7 @@ pub const Compiler = @import("compiler/Compiler.zig");
 pub const Bytecode = @import("compiler/Bytecode.zig");
 pub const Vm = @import("vm/Vm.zig");
 
-pub const version = "0.1.1";
+pub const version = "0.1.2";
 
 pub fn tokenize(input: []const u8, allocator: std.mem.Allocator, source_name: ?[]const u8) Lexer.Data.Error!Lexer.Data {
     var lexer = Lexer.init(input, allocator, source_name);

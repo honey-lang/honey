@@ -125,7 +125,7 @@ pub const VariableStatement = struct {
     kind: Token,
     name: []const u8,
     type: ?[]const u8 = null,
-    expression: Expression,
+    expression: ?Expression = null,
 
     pub fn isConst(self: VariableStatement) bool {
         return self.kind == .@"const";
@@ -135,14 +135,23 @@ pub const VariableStatement = struct {
         return self.type != null;
     }
 
+    pub fn hasExpression(self: VariableStatement) bool {
+        return self.expression != null;
+    }
+
     pub fn format(self: VariableStatement, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        return writer.print("{s} {s}{s}{s} = {s};", .{
+        try writer.print("{s} {s}{s}{s}", .{
             if (self.kind == .let) "let" else "const",
             self.name,
             if (self.type != null) ": " else "",
             if (self.type) |type_name| type_name else "",
-            self.expression,
         });
+
+        // if we have an expr, print it out
+        if (self.expression) |expr| {
+            try writer.print(" = {s}", .{expr});
+        }
+        try writer.writeByte(';');
     }
 };
 

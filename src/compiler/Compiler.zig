@@ -434,7 +434,10 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 }
 
                 const index = try self.addConstant(.{ .identifier = inner.name });
-                try self.compileExpression(inner.expression);
+                // compile the expression if it exists
+                if (inner.expression) |expr| {
+                    try self.compileExpression(expr);
+                }
 
                 try self.markGlobal(inner.name);
                 try self.addInstruction(if (inner.kind == .@"const") .{ .declare_const = index } else .{ .declare_var = index });
@@ -451,7 +454,9 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             }
 
             _ = try self.scope_context.addLocal(inner.name, inner.kind == .@"const");
-            try self.compileExpression(inner.expression);
+            if (inner.expression) |expr| {
+                try self.compileExpression(expr);
+            }
         },
         .assignment => |inner| switch (inner.lhs) {
             .identifier => |name| {
@@ -582,7 +587,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             if (inner.expression) |expr| {
                 try self.compileExpression(expr);
             } else {
-                try self.addInstruction(.void);
+                try self.addInstruction(.null);
             }
 
             // if we're in a current function, clean it up
@@ -593,7 +598,6 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.addInstruction(.{ .get_temp = slot });
                 self.scope_context.deallocateTemp();
             }
-
             try self.addInstruction(.@"return");
         },
         .@"break" => {

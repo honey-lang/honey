@@ -390,7 +390,9 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .declare_const, .declare_var => {
             const decl_name = try self.fetchConstant();
-            const value = try self.popOrError();
+
+            // default to null if there's no return value
+            const value = self.popOrNull();
 
             const map = if (instruction == .declare_const) &self.global_constants else &self.global_variables;
             const map_name = if (instruction == .declare_const) "constant" else "variable";
@@ -419,7 +421,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.reportError("Variable not found: {s}", .{variable_name.identifier});
                 return VmError.VariableNotFound;
             }
-            const value = try self.popOrError();
+            const value = self.popOrNull();
             self.global_variables.put(variable_name.identifier, value) catch |err| {
                 self.reportError("Failed to set global variable: {any}", .{err});
                 return error.GenericError;
@@ -523,12 +525,8 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             try value.dict.put(index_value.string, new_value);
         },
         .get_member => {
-            // self.stack.dump();
             const index_value = try self.popOrError();
             const value = try self.popOrError();
-
-            // self.stack.dump();
-
             try self.pushOrError(value.dict.get(index_value.string) orelse Value.Null);
         },
         .get_temp => {
@@ -787,6 +785,16 @@ fn freeValue(self: *Self, value: Value) void {
         },
         else => {},
     }
+}
+
+fn popOrNull(self: *Self) Value {
+    // when last popped becomes the penultimate, we will free the memory since we're holding no more references to it
+    if (self.last_popped) |last_popped| {
+        self.freeValue(last_popped);
+    }
+
+    self.last_popped = self.stack.pop() catch return Value.Null;
+    return self.last_popped.?;
 }
 
 /// Pops a value from the stack or reports and returns an error

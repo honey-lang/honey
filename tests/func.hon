@@ -5,12 +5,14 @@
 fn add(first: int, second: int) {
     // @println(first, " + ", second, " = ", first + second);
     const result = first + second;
-    return result;
+    // return result;
 }
 
 // hello_world("Em");
 // hello_world("World");
 
 
-let result = add(1, 2);
-@println("Result: ", result);
+let test;
+
+test = add(1, 2);
+@println("Result: ", test);

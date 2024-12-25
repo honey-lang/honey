@@ -322,11 +322,15 @@ fn parseVarDeclaration(self: *Self) ParserError!Statement {
         break :token self.currentToken();
     } else null;
 
-    // we aren't storing the assignment token so we can skip past it once we peek at it
-    try self.expectPeekAndAdvance(.assignment);
-    self.cursor.advance();
+    const expression: ?Expression = if (self.peekIs(.assignment)) blk: {
+        // we aren't storing the assignment token so we can skip past it once we peek at it
+        self.cursor.advanceAmount(2);
+        break :blk try self.parseExpression(.lowest);
+    } else blk: {
+        self.cursor.advance();
+        break :blk null;
+    };
 
-    const expression = try self.parseExpression(.lowest);
     try self.expectSemicolon();
     return .{ .variable = .{
         .kind = kind_token,

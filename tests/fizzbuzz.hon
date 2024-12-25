@@ -1,7 +1,7 @@
 const MIN = @parse_number(@prompt("Enter the minimum number: "));
 const MAX = @parse_number(@prompt("Enter the maximum number: "));
 
-@println("Running on Honey version: ", HONEY_VERSION);
+@println(" Running on Honey version: ", HONEY_VERSION);
 if (MIN > MAX) {
     @println("The minimum number must be less than the maximum number.");
     return;

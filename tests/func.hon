@@ -1,0 +1,6 @@
+fn hello_world(name: string) {
+    @println("Hello, ", name);
+}
+
+hello_world("Em");
+hello_world("World");

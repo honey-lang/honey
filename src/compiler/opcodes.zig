@@ -60,6 +60,8 @@ pub const Opcode = enum(u8) {
     not = 0x42,
     /// The `call_builtin` opcode is used to call a builtin function.
     call_builtin = 0x50,
+    /// The `call_func` opcode is used to call a userland function
+    call_func = 0x51,
     /// The `declare_const` opcode is used to declare a global constant.
     declare_const = 0x60,
     /// The `declare_var` opcode is used to declare a global variable.
@@ -165,6 +167,7 @@ pub const Instruction = union(Opcode) {
     @"or": void,
     not: void,
     call_builtin: struct { constant_index: u16, arg_count: u16 },
+    call_func: struct { constant_index: u16, arg_count: u16 },
     declare_const: u16,
     declare_var: u16,
     set_global: u16,

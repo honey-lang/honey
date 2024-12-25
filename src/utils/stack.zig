@@ -18,8 +18,14 @@ pub fn Stack(comptime T: type) type {
             self.data.deinit();
         }
 
+        /// Returns the number of elements currently on the stack
         pub fn size(self: *Self) usize {
             return self.data.items.len;
+        }
+
+        /// Returns true if the stack contains no elements
+        pub fn empty(self: *Self) bool {
+            return self.data.items.len == 0;
         }
 
         /// Converts the stack index to the actual index in the data structure.

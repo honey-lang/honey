@@ -101,6 +101,7 @@ const Iterator = struct {
 };
 
 const CurrentInstructionData = struct { opcode: Opcode, program_counter: usize };
+const CallFrame = struct { return_address: usize };
 
 /// The allocator used for memory allocation in the VM
 ally: std.mem.Allocator,
@@ -112,6 +113,8 @@ objects: ObjectList = .{},
 global_constants: VariableMap,
 /// The global variables in the VM
 global_variables: VariableMap,
+/// A mapping of function names to their offsets in the program
+funcs: std.StringArrayHashMap(usize),
 /// Built-in functions for the VM
 builtins: std.StringArrayHashMap(BuiltinFn),
 /// Diagnostics for the VM
@@ -129,6 +132,8 @@ current_instruction_data: CurrentInstructionData = .{
 stack_pointer: usize = 0,
 /// The stack itself
 stack: utils.Stack(Value),
+/// Holds a list of stack frames
+call_stack: utils.Stack(CallFrame),
 /// Holds the last value popped from the stack
 last_popped: ?Value = null,
 /// The currently active iterators
@@ -155,10 +160,12 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .bytecode = bytecode,
         .global_constants = VariableMap.init(ally),
         .global_variables = VariableMap.init(ally),
+        .funcs = bytecode.funcs,
         .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
         .active_iterator_stack = utils.Stack(Iterator).init(ally),
+        .call_stack = utils.Stack(CallFrame).init(ally),
         .options = options,
         .writer = options.writer,
     };
@@ -174,6 +181,7 @@ pub fn deinit(self: *Self) void {
     self.builtins.deinit();
     self.global_constants.deinit();
     self.global_variables.deinit();
+    self.funcs.deinit();
 }
 
 /// Returns the allocator attached to the arena
@@ -185,6 +193,7 @@ pub fn allocator(self: *Self) std.mem.Allocator {
 fn collectGarbage(self: *Self) VmError!void {
     while (self.objects.popFirst()) |node| {
         switch (node.data.*) {
+            // .func => self.allocator().free(node.data.func),
             .string => self.allocator().free(node.data.string),
             .identifier => self.allocator().free(node.data.identifier),
             inline else => {
@@ -294,9 +303,14 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
 
     switch (instruction) {
         .@"return" => {
+            // if return is called and our call stack is empty, stop our VM
+            if (self.call_stack.empty()) {
+                self.running = false;
+                return;
+            }
+            const frame = self.call_stack.pop() catch unreachable;
+            self.program_counter = frame.return_address;
             // todo: handle return values from functions
-            self.running = false;
-            return;
         },
         .@"const" => {
             const constant = try self.fetchConstant();
@@ -536,6 +550,27 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             };
             const output = run_func(self, args) catch return VmError.GenericError;
             try self.pushOrError(if (output) |value| value else Value.Void);
+        },
+        .call_func => {
+            // 1. Find function (or throw error if it doesn't exist)
+            const func_name = try self.fetchConstant();
+            const func_offset = self.funcs.get(func_name.identifier) orelse {
+                self.reportError("Unable to call undefined function '{s}'", .{func_name.identifier});
+                return VmError.GenericError;
+            };
+
+            // 2. Fetch argument count
+            const arg_count = try self.fetchNumber(u16);
+            _ = arg_count;
+
+            // 3. Create call frame
+            self.call_stack.push(CallFrame{ .return_address = self.program_counter + 1 }) catch |err| {
+                self.reportError("Unable to push call frame onto stack: {any}", .{err});
+                return VmError.OutOfMemory;
+            };
+
+            // 4. Call function by jumping to it
+            self.program_counter = func_offset;
         },
         .iterable_begin => {
             var iterable = self.stack.peek() catch {

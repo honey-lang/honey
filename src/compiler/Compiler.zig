@@ -57,6 +57,8 @@ const Error = error{
     VariableAlreadyExists,
     /// Occurs when the compiler encounters an unexpected type
     UnexpectedType,
+    /// Occurs when the compiler attempts to exit a function that it is not in
+    NotInFunction,
 };
 
 const Local = struct {
@@ -203,6 +205,21 @@ const ScopeContext = struct {
     }
 };
 
+/// A raw instruction list type
+const InstructionList = std.ArrayList(u8);
+const CurrentFunction = struct {
+    name: []const u8,
+    instructions: InstructionList,
+
+    pub fn init(name: []const u8, ally: std.mem.Allocator) CurrentFunction {
+        return .{ .name = name, .instructions = InstructionList.init(ally) };
+    }
+
+    pub fn deinit(self: *CurrentFunction) void {
+        self.instructions.deinit();
+    }
+};
+
 /// A simple arena allocator used when compiling into bytecode
 arena: std.heap.ArenaAllocator,
 /// The current program being compiled
@@ -210,7 +227,7 @@ program: ast.Program,
 /// The diagnostics used by the compiler
 diagnostics: utils.Diagnostics,
 /// The instructions being generated
-instructions: std.ArrayList(u8),
+instructions: InstructionList,
 /// A list of constant expressions used in the program
 constants: std.ArrayList(Value),
 /// A list of global identifiers declared in the program
@@ -219,6 +236,10 @@ declared_global_identifiers: GlobalIdentifierMap,
 last_compiled_instr: ?CompiledInstruction = null,
 /// The instruction before the last instruction
 penult_compiled_instr: ?CompiledInstruction = null,
+/// The current function to emit the bytecode into
+current_func: ?CurrentFunction = null,
+/// The list of functions that have been declared in the program
+declared_funcs: std.ArrayList(CurrentFunction),
 /// Context about the current scope
 scope_context: ScopeContext,
 /// The writer used for error reporting
@@ -230,9 +251,10 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program, error_writer: std.io.
         .arena = std.heap.ArenaAllocator.init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .program = program,
-        .instructions = std.ArrayList(u8).init(ally),
+        .instructions = InstructionList.init(ally),
         .constants = std.ArrayList(Value).init(ally),
         .declared_global_identifiers = GlobalIdentifierMap.init(ally),
+        .declared_funcs = std.ArrayList(CurrentFunction).init(ally),
         .scope_context = ScopeContext.init(ally),
         .error_writer = error_writer,
     };
@@ -245,12 +267,30 @@ pub fn deinit(self: *Self) void {
     self.instructions.deinit();
     self.constants.deinit();
     self.declared_global_identifiers.deinit();
+    self.declared_funcs.deinit();
     self.scope_context.deinit();
+}
+
+fn enterFunction(self: *Self, name: []const u8) void {
+    self.current_func = CurrentFunction.init(name, self.arena.allocator());
+}
+
+fn exitFunction(self: *Self) Error!void {
+    if (self.current_func) |func| {
+        self.declared_funcs.append(func) catch return Error.OutOfMemory;
+        self.current_func = null;
+        return;
+    }
+    return Error.NotInFunction;
 }
 
 /// Adds an operation to the bytecode
 fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
-    const writer = self.instructions.writer();
+    // if we're in a function, use our func instructions writer. otherwise, write to global program
+    const writer: InstructionList.Writer = if (self.current_func) |*current|
+        current.instructions.writer()
+    else
+        self.instructions.writer();
 
     const index = self.instructions.items.len;
     try encode(writer, instruction);
@@ -337,8 +377,23 @@ pub fn compile(self: *Self) !Bytecode {
     for (self.program.statements.items) |statement| {
         try self.compileStatement(statement);
     }
+    // add return from body
+    try self.addInstruction(.@"return");
 
-    return .{ .instructions = self.instructions.items, .constants = self.constants.items };
+    var func_map = std.StringArrayHashMap(usize).init(self.arena.allocator());
+    // append all of our declared functions after the body of the main program
+    for (self.declared_funcs.items) |*func| {
+        // map our function names to their offset in the program
+        try func_map.put(func.*.name, self.instructions.items.len);
+        try self.instructions.appendSlice(func.*.instructions.items);
+        func.deinit();
+    }
+
+    return .{
+        .instructions = self.instructions.items,
+        .constants = self.constants.items,
+        .funcs = func_map,
+    };
 }
 
 /// Compiles a statement into bytecode
@@ -470,8 +525,37 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 _ = self.scope_context.popLocal();
             }
         },
+        .@"fn" => |inner| {
+            self.enterFunction(inner.name);
+            // compile the block's statements & handle the scope depth
+            {
+                self.scope_context.current_depth += 1;
+                defer self.scope_context.current_depth -= 1;
+                // Declare parameters as local values
+                for (inner.parameters) |parameter| {
+                    _ = try self.scope_context.addLocal(parameter.identifier, true);
+                }
+
+                for (inner.body.statements) |stmt| {
+                    try self.compileStatement(stmt);
+                }
+            }
+
+            // pop after the block is done
+            while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
+                try self.addInstruction(.pop);
+                _ = self.scope_context.popLocal();
+            }
+            // if our last instruction wasn't a return, append it to our list
+            const last_instr = try self.getLastInstruction();
+            if (last_instr.opcode != .@"return") {
+                try self.addInstruction(.@"return");
+            }
+
+            try self.exitFunction();
+        },
         .@"return" => |inner| {
-            // todo: handle return values
+            // TODO: handle return values
             _ = inner;
             try self.addInstruction(.@"return");
         },
@@ -493,7 +577,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 return Error.UnsupportedStatement;
             }
         },
-        inline else => return Error.UnsupportedStatement,
+        // inline else => return Error.UnsupportedStatement,
     }
 }
 
@@ -814,6 +898,16 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                 const index = try self.addConstant(.{ .identifier = value });
                 try self.addInstruction(.{ .get_global = index });
             }
+        },
+        .call => |inner| {
+            const index = try self.addConstant(.{ .identifier = inner.name });
+            for (inner.arguments) |arg| {
+                try self.compileExpression(arg);
+            }
+            try self.addInstruction(.{ .call_func = .{
+                .constant_index = index,
+                .arg_count = @as(u16, @intCast(inner.arguments.len)),
+            } });
         },
         .builtin => |inner| {
             const index = try self.addConstant(.{ .identifier = inner.name });

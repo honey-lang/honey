@@ -366,14 +366,47 @@ fn parseFunctionDeclaration(self: *Self) ParserError!Statement {
 }
 
 fn parseFunctionParameters(self: *Self) ParserError![]const Expression {
-    const expressions = try self.parseExpressionList(.left_paren, .right_paren);
-    for (expressions) |expr| {
+    try self.expectCurrentAndAdvance(.left_paren);
+    var parameters = std.ArrayList(Expression).init(self.allocator());
+    if (self.currentIs(.right_paren)) {
+        self.cursor.advance();
+        return parameters.toOwnedSlice();
+    }
+
+    const first = self.parseExpression(.lowest) catch unreachable;
+    parameters.append(first) catch unreachable;
+    if (first != .identifier) {
+        self.diagnostics.report("expected identifier but got: {}", .{first}, self.cursor.current());
+        return ParserError.UnexpectedToken;
+    }
+    if (self.currentIs(.colon)) {
+        self.cursor.advance();
+        // type annotations as "comments"
+        // TODO: strict typing would be nice!
+        try self.expectCurrentAndAdvance(.identifier);
+    }
+
+    while (self.currentIs(.comma)) {
+        self.cursor.advance();
+        // break out for trailing commas
+        if (self.currentIs(.right_paren)) {
+            break;
+        }
+        const expr = self.parseExpression(.lowest) catch unreachable;
         if (expr != .identifier) {
             self.diagnostics.report("expected identifier but got: {}", .{expr}, self.cursor.current());
             return ParserError.UnexpectedToken;
         }
+        if (self.currentIs(.colon)) {
+            self.cursor.advance();
+            // type annotations as "comments"
+            // TODO: strict typing would be nice!
+            try self.expectCurrentAndAdvance(.identifier);
+        }
+        parameters.append(expr) catch unreachable;
     }
-    return expressions;
+    try self.expectCurrentAndAdvance(.right_paren);
+    return parameters.toOwnedSlice();
 }
 
 fn parseBlockStatement(self: *Self) ParserError!ast.BlockStatement {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Bytecode = @import("Bytecode.zig");
 
 pub const Value = union(enum) {
     pub const Error = error{
@@ -15,6 +16,7 @@ pub const Value = union(enum) {
 
     pub const ListMap = std.AutoArrayHashMap(usize, Value);
     pub const DictMap = std.StringArrayHashMap(Value);
+    pub const Function = struct { name: []const u8, parameter_count: u8, bytecode: Bytecode };
 
     /// `constant` represents an index to a constant in the constant pool.
     /// This constant is a value that is known at compile time.
@@ -35,6 +37,8 @@ pub const Value = union(enum) {
     list: ListMap,
     /// `dict` represents a dictionary of values
     dict: DictMap,
+    /// `func` represents a reference to a function
+    func: Function,
 
     /// Calculates the maximum width of the payload in bytes.
     pub inline fn maxWidth() usize {
@@ -232,6 +236,7 @@ pub const Value = union(enum) {
                 }
                 try writer.writeAll(" }");
             },
+            .func => |value| try writer.print("fn {s}(...) {{ }}", .{value.name}),
             inline else => try writer.print("{s}", .{@tagName(self)}),
         }
     }

@@ -10,6 +10,8 @@ const Self = @This();
 instructions: []const u8,
 /// The constant pool for which the instructions can refer to
 constants: []const Value,
+/// A mapping of function names to their offsets in the program
+funcs: std.StringArrayHashMap(usize),
 
 /// Dumps the formatted instruction data into the provided writer
 pub fn dump(self: Self, writer: anytype) !void {
@@ -27,9 +29,22 @@ pub fn dumpRaw(self: Self, width: u8, writer: anytype) !void {
 /// Generates human-readable bytecode instructions as a string
 pub fn format(self: Self, _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
     var index: usize = 0;
+
+    // use the allocator associated w/ our funcs to reverse our keys/values
+    var index_map = std.AutoArrayHashMap(usize, []const u8).init(self.funcs.allocator);
+    defer index_map.deinit();
+    var iterator = self.funcs.iterator();
+    while (iterator.next()) |entry| {
+        try index_map.put(entry.value_ptr.*, entry.key_ptr.*);
+    }
     while (index < self.instructions.len) {
+        // if we find an index that maps to a func name, print it out
+        if (index_map.get(index)) |name| {
+            try writer.print("{s}:\n", .{name});
+        }
         const instruction = self.instructions[index];
-        try writer.print("{x:0>4}", .{index});
+        // prepend with spaces for better formatting especially w/ labels
+        try writer.print("  {x:0>4}", .{index});
         const opcode = Opcode.fromByte(instruction) catch std.debug.panic("unexpected opcode: 0x{x:0>2}", .{instruction});
         index += 1;
 
@@ -69,11 +84,11 @@ fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytyp
             const stack_slot = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {d}", .{stack_slot});
         },
-        .call_builtin => {
+        .call_func, .call_builtin => {
             const const_idx = std.mem.readInt(u16, operands[0..2], .big);
             const arg_count = std.mem.readInt(u16, operands[2..4], .big);
 
-            try writer.print(" {s} (arg count: {d})", .{ self.constants[const_idx], arg_count });
+            try writer.print(" <{s}> (arg count: {d})", .{ self.constants[const_idx], arg_count });
         },
         inline else => {},
     }

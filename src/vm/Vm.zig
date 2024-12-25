@@ -132,6 +132,8 @@ current_instruction_data: CurrentInstructionData = .{
 stack_pointer: usize = 0,
 /// The stack itself
 stack: utils.Stack(Value),
+/// The stack used to track temporary values
+temp_store: std.AutoArrayHashMap(u16, Value),
 /// Holds a list of stack frames
 call_stack: utils.Stack(CallFrame),
 /// Holds the last value popped from the stack
@@ -164,6 +166,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .builtins = std.StringArrayHashMap(BuiltinFn).init(ally),
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
+        .temp_store = std.AutoArrayHashMap(u16, Value).init(ally),
         .active_iterator_stack = utils.Stack(Iterator).init(ally),
         .call_stack = utils.Stack(CallFrame).init(ally),
         .options = options,
@@ -177,6 +180,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
 pub fn deinit(self: *Self) void {
     self.active_iterator_stack.deinit();
     self.stack.deinit();
+    self.temp_store.deinit();
     self.diagnostics.deinit();
     self.builtins.deinit();
     self.global_constants.deinit();
@@ -526,6 +530,34 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             // self.stack.dump();
 
             try self.pushOrError(value.dict.get(index_value.string) orelse Value.Null);
+        },
+        .get_temp => {
+            const offset = self.fetchNumber(u16) catch |err| {
+                self.reportError("Unable to fetch offset for temporary variable: {any}", .{err});
+                return VmError.GenericError;
+            };
+            const value = self.temp_store.get(offset) orelse {
+                self.reportError("Unable to fetch temporary variable at offset {d}", .{offset});
+                return VmError.GenericError;
+            };
+            self.stack.push(value) catch |err| {
+                self.reportError("Unable to push temporary variable onto stack: {any}", .{err});
+                return VmError.GenericError;
+            };
+        },
+        .set_temp => {
+            const offset = self.fetchNumber(u16) catch |err| {
+                self.reportError("Unable to fetch offset for temporary variable: {any}", .{err});
+                return VmError.GenericError;
+            };
+            const value = self.stack.pop() catch |err| {
+                self.reportError("Unable to pop from stack for temporary value: {any}", .{err});
+                return VmError.GenericError;
+            };
+            self.temp_store.put(offset, value) catch |err| {
+                self.reportError("Unable to set temporary variable at offset {d}: {any}", .{ offset, err });
+                return VmError.GenericError;
+            };
         },
         .call_builtin => {
             const builtin = try self.fetchConstant();

@@ -73,6 +73,8 @@ const Local = struct {
 const ScopeContext = struct {
     const LocalArray = std.BoundedArray(Local, MaxLocalVariables);
 
+    // The number of temporary variables being tracked by the compiler
+    temp_variable_count: u16 = 0,
     /// The local variables being tracked by the compiler
     local_variables: LocalArray = .{},
     /// The depth of the current scope
@@ -131,6 +133,17 @@ const ScopeContext = struct {
         self.break_statements.clearRetainingCapacity();
         self.continue_statements.clearRetainingCapacity();
         self.current_loop = null;
+    }
+
+    // Allocates a temp variable slot by incrementing the count
+    inline fn allocateTemp(self: *ScopeContext) u16 {
+        defer self.temp_variable_count += 1;
+        return self.temp_variable_count;
+    }
+
+    // Deallocates a temp variable slot by decrementing the count
+    inline fn deallocateTemp(self: *ScopeContext) void {
+        self.temp_variable_count -= 1;
     }
 
     /// Returns the local variables in the current scope
@@ -273,17 +286,23 @@ pub fn deinit(self: *Self) void {
 
 fn enterFunction(self: *Self, name: []const u8) void {
     self.current_func = CurrentFunction.init(name, self.arena.allocator());
-    self.scope_context.current_depth += 1;
 }
 
 fn exitFunction(self: *Self) Error!void {
     if (self.current_func) |func| {
         self.declared_funcs.append(func) catch return Error.OutOfMemory;
         self.current_func = null;
-        self.scope_context.current_depth -= 1;
         return;
     }
     return Error.NotInFunction;
+}
+
+/// Cleans the current scope by adding `pop` instructions and removing them from our internal context
+fn cleanScope(self: *Self) Error!void {
+    while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
+        try self.addInstruction(.pop);
+        _ = self.scope_context.popLocal();
+    }
 }
 
 /// Adds an operation to the bytecode
@@ -528,29 +547,35 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             }
         },
         .@"fn" => |inner| {
+            var found_return = false;
             self.enterFunction(inner.name);
+            // compile the block's statements & handle the scope depth
+            self.scope_context.current_depth += 1;
             // Declare parameters as local values
             for (inner.parameters) |parameter| {
                 _ = try self.scope_context.addLocal(parameter.identifier, true);
             }
 
-            // compile the block's statements & handle the scope depth
-            for (inner.body.statements) |stmt| {
+            const fn_decl: ast.FunctionDeclaration = inner;
+            for (fn_decl.body.statements) |stmt| {
+                // if we find a return, we will clean up
+                if (stmt == .@"return") {
+                    self.scope_context.current_depth -= 1;
+                    try self.compileStatement(stmt);
+                    found_return = true;
+                    break;
+                }
                 try self.compileStatement(stmt);
             }
 
-            // if our last instruction wasn't a return, append it to our list
-            const last_instr = try self.getLastInstruction();
-            if (last_instr.opcode != .@"return") {
+            // if the function didn't have a return, we will clean our scope and add the instr
+            if (!found_return) {
+                self.scope_context.current_depth -= 1;
+                try self.cleanScope();
                 try self.addInstruction(.@"return");
             }
-            try self.exitFunction();
 
-            // pop after the function is done
-            while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
-                // try self.addInstruction(.pop);
-                _ = self.scope_context.popLocal();
-            }
+            try self.exitFunction();
         },
         .@"return" => |inner| {
             // if we have a return expression, compile it
@@ -559,6 +584,16 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             } else {
                 try self.addInstruction(.void);
             }
+
+            // if we're in a current function, clean it up
+            if (self.current_func != null) {
+                const slot = self.scope_context.allocateTemp();
+                try self.addInstruction(.{ .set_temp = slot });
+                try self.cleanScope();
+                try self.addInstruction(.{ .get_temp = slot });
+                self.scope_context.deallocateTemp();
+            }
+
             try self.addInstruction(.@"return");
         },
         .@"break" => {

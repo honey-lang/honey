@@ -11,6 +11,7 @@ pub const Opcode = enum(u8) {
     dict = 0x03,
     /// The `pop` opcode is used to pop a value from the stack.
     pop = 0x04,
+    /// The `dup` opcode is used to duplicate the top of the stack and push it back on the stack
     /// The `jump` opcode is used to jump to an instruction.
     jump = 0x05,
     /// The `jump_if_false` opcode is used to jump to an instruction if the top of the stack is false.
@@ -82,6 +83,10 @@ pub const Opcode = enum(u8) {
     set_member = 0x74,
     /// The `get_member` opcode is used to get the value of a member in a class/dictionary.
     get_member = 0x75,
+    /// The `set_temp` opcode will pop a value off of the stack and store it in the given index
+    set_temp = 0x76,
+    /// The `get_temp` opcode will return a value from the temporary store and push it onto the stack
+    get_temp = 0x77,
     /// The `iterable_begin` opcode is used to get the beginning of an iterable.
     iterable_begin = 0x80,
     /// The `iterable_end` opcode is used to get the end of an iterable.
@@ -178,6 +183,8 @@ pub const Instruction = union(Opcode) {
     get_index: void,
     set_member: void,
     get_member: void,
+    set_temp: u16,
+    get_temp: u16,
     iterable_begin: void,
     iterable_end: void,
     iterable_next: void,

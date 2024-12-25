@@ -44,6 +44,8 @@
 | `get_index`         | 0x73   | void     |
 | `set_member`        | 0x74   | void     |
 | `get_member`        | 0x75   | void     |
+| `set_temp`          | 0x76   | u16      |
+| `get_temp`          | 0x77   | u16      |
 | `iterable_begin`    | 0x80   | void     |
 | `iterable_end`      | 0x81   | void     |
 | `iterable_next`     | 0x82   | void     |

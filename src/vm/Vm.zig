@@ -101,7 +101,7 @@ const Iterator = struct {
 };
 
 const CurrentInstructionData = struct { opcode: Opcode, program_counter: usize };
-const CallFrame = struct { return_address: usize };
+const CallFrame = struct { return_address: usize, return_slot: ?usize = null };
 
 /// The allocator used for memory allocation in the VM
 ally: std.mem.Allocator,
@@ -300,6 +300,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     //     std.debug.print("Collecting garbage...\n", .{});
     //     try self.collectGarbage();
     // }
+    //
 
     switch (instruction) {
         .@"return" => {
@@ -310,7 +311,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
             const frame = self.call_stack.pop() catch unreachable;
             self.program_counter = frame.return_address;
-            // todo: handle return values from functions
         },
         .@"const" => {
             const constant = try self.fetchConstant();
@@ -564,7 +564,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             _ = arg_count;
 
             // 3. Create call frame
-            self.call_stack.push(CallFrame{ .return_address = self.program_counter + 1 }) catch |err| {
+            self.call_stack.push(CallFrame{ .return_address = self.program_counter }) catch |err| {
                 self.reportError("Unable to push call frame onto stack: {any}", .{err});
                 return VmError.OutOfMemory;
             };

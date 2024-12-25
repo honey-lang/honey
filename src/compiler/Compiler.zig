@@ -273,12 +273,14 @@ pub fn deinit(self: *Self) void {
 
 fn enterFunction(self: *Self, name: []const u8) void {
     self.current_func = CurrentFunction.init(name, self.arena.allocator());
+    self.scope_context.current_depth += 1;
 }
 
 fn exitFunction(self: *Self) Error!void {
     if (self.current_func) |func| {
         self.declared_funcs.append(func) catch return Error.OutOfMemory;
         self.current_func = null;
+        self.scope_context.current_depth -= 1;
         return;
     }
     return Error.NotInFunction;
@@ -527,36 +529,36 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         },
         .@"fn" => |inner| {
             self.enterFunction(inner.name);
+            // Declare parameters as local values
+            for (inner.parameters) |parameter| {
+                _ = try self.scope_context.addLocal(parameter.identifier, true);
+            }
+
             // compile the block's statements & handle the scope depth
-            {
-                self.scope_context.current_depth += 1;
-                defer self.scope_context.current_depth -= 1;
-                // Declare parameters as local values
-                for (inner.parameters) |parameter| {
-                    _ = try self.scope_context.addLocal(parameter.identifier, true);
-                }
-
-                for (inner.body.statements) |stmt| {
-                    try self.compileStatement(stmt);
-                }
+            for (inner.body.statements) |stmt| {
+                try self.compileStatement(stmt);
             }
 
-            // pop after the block is done
-            while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
-                try self.addInstruction(.pop);
-                _ = self.scope_context.popLocal();
-            }
             // if our last instruction wasn't a return, append it to our list
             const last_instr = try self.getLastInstruction();
             if (last_instr.opcode != .@"return") {
                 try self.addInstruction(.@"return");
             }
-
             try self.exitFunction();
+
+            // pop after the function is done
+            while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
+                // try self.addInstruction(.pop);
+                _ = self.scope_context.popLocal();
+            }
         },
         .@"return" => |inner| {
-            // TODO: handle return values
-            _ = inner;
+            // if we have a return expression, compile it
+            if (inner.expression) |expr| {
+                try self.compileExpression(expr);
+            } else {
+                try self.addInstruction(.void);
+            }
             try self.addInstruction(.@"return");
         },
         .@"break" => {

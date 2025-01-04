@@ -9,16 +9,18 @@ pub const Opcode = enum(u8) {
     list = 0x02,
     /// The `dict` opcode is used to create a dictionary from the values on the stack.
     dict = 0x03,
+    /// The `range` opcode is used to create a range from the values on the stack.
+    range = 0x04,
     /// The `pop` opcode is used to pop a value from the stack.
-    pop = 0x04,
+    pop = 0x05,
     /// The `dup` opcode is used to duplicate the top of the stack and push it back on the stack
     /// The `jump` opcode is used to jump to an instruction.
-    jump = 0x05,
+    jump = 0x06,
     /// The `jump_if_false` opcode is used to jump to an instruction if the top of the stack is false.
     /// The top of the stack is popped.
-    jump_if_false = 0x06,
+    jump_if_false = 0x07,
     /// The `loop` opcode is used to jump back `n` instructions.
-    loop = 0x07,
+    loop = 0x08,
     /// The `true` opcode is used to push a true value onto the stack.
     true = 0x10,
     /// The `false` opcode is used to push a false value onto the stack.
@@ -119,7 +121,7 @@ pub const Opcode = enum(u8) {
 
     /// Returns the payload of the opcode.
     pub fn payload(self: Opcode) type {
-        @setEvalBranchQuota(3000);
+        @setEvalBranchQuota(5000);
         return switch (self) {
             inline else => |inner| std.meta.TagPayload(Instruction, inner),
         };
@@ -147,6 +149,7 @@ pub const Instruction = union(Opcode) {
     @"const": u16,
     list: u16,
     dict: u16,
+    range: bool,
     pop: void,
     jump: u16,
     jump_if_false: u16,
@@ -202,6 +205,7 @@ pub fn encode(value: anytype, writer: anytype) !void {
     const ValueType = @TypeOf(value);
     const value_type_info = @typeInfo(ValueType);
     switch (value_type_info) {
+        .Bool => try writer.writeInt(u8, if (value) 1 else 0, .big),
         .Int => try writer.writeInt(ValueType, value, .big),
         .Float => {
             const value_bytes = @as([@sizeOf(value)]u8, @bitCast(value));

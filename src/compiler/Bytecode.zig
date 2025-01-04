@@ -72,6 +72,10 @@ fn formatOpcode(self: Self, opcode: Opcode, operands: []const u8, writer: anytyp
             const size = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {d}", .{size});
         },
+        .range => {
+            const inclusive = operands[0] != 0;
+            try writer.print(" inclusive={}", .{inclusive});
+        },
         .jump, .jump_if_false, .loop => {
             const instr_idx = std.mem.readInt(u16, operands[0..2], .big);
             try writer.print(" {x:0>4}", .{instr_idx});

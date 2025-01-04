@@ -23,6 +23,7 @@ pub const Precedence = enum {
     modulo,
     prefix,
     call,
+    range,
     index,
 
     pub fn fromToken(token: Token) Precedence {
@@ -36,6 +37,7 @@ pub const Precedence = enum {
             .modulo => .modulo,
             .bang => .prefix,
             .left_paren => .call,
+            .inclusive_range, .exclusive_range => .range,
             .left_bracket, .dot => .index,
             inline else => .lowest,
         };
@@ -569,14 +571,7 @@ fn parseWhileExpression(self: *Self) ParserError!Expression {
 fn parseForExpression(self: *Self) ParserError!Expression {
     // for (0..10)
     try self.expectCurrentAndAdvance(.left_paren);
-    const expr = if (self.peekIs(.inclusive_range) or self.peekIs(.exclusive_range)) range: {
-        if (!self.currentIs(.number) and !self.currentIs(.identifier)) {
-            self.diagnostics.report("expected number or identifier for range but got: {}", .{self.currentToken()}, self.cursor.current());
-            return ParserError.UnexpectedToken;
-        }
-        break :range try self.parseRange();
-    } else try self.parseExpression(.lowest);
-
+    const expr = try self.parseExpression(.lowest);
     try self.expectCurrentAndAdvance(.right_paren);
 
     // |i|
@@ -600,24 +595,10 @@ fn parseForExpression(self: *Self) ParserError!Expression {
     } };
 }
 
-fn parseRange(self: *Self) ParserError!Expression {
-    const start = try self.parseExpression(.lowest);
-    const start_ptr = try self.moveToHeap(start);
-
-    const inclusive = switch (self.currentToken()) {
-        .inclusive_range => true,
-        .exclusive_range => false,
-        inline else => {
-            self.diagnostics.report("expected range operator but got: {}", .{self.currentToken()}, self.cursor.current());
-            return ParserError.UnexpectedToken;
-        },
-    };
-    self.cursor.advance();
-
+fn parseRangeExpression(self: *Self, start: *Expression, inclusive: bool) ParserError!Expression {
     const end = try self.parseExpression(.lowest);
     const end_ptr = try self.moveToHeap(end);
-
-    return .{ .range = .{ .start = start_ptr, .end = end_ptr, .inclusive = inclusive } };
+    return .{ .range = .{ .start = start, .end = end_ptr, .inclusive = inclusive } };
 }
 
 /// Parses an expression by attempting to parse it as a prefix.
@@ -667,6 +648,7 @@ fn parseExpressionAsInfix(self: *Self, lhs: *Expression) ParserError!Expression 
         .left_paren => return try self.parseCallExpression(lhs),
         .left_bracket => return try self.parseIndexExpression(lhs),
         .dot => return try self.parseMemberExpression(lhs),
+        .inclusive_range, .exclusive_range => return try self.parseRangeExpression(lhs, token_data.token == .inclusive_range),
         else => {},
     }
     const operator = Operator.fromTokenData(token_data) catch return ParserError.UnexpectedToken;

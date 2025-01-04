@@ -8,10 +8,11 @@
 | `const`             | 0x01   | u16      |
 | `list`              | 0x02   | u16      |
 | `dict`              | 0x03   | u16      |
-| `pop`               | 0x04   | void     |
-| `jump`              | 0x05   | u16      |
-| `jump_if_false`     | 0x06   | u16      |
-| `loop`              | 0x07   | u16      |
+| `range`             | 0x04   | bool     |
+| `pop`               | 0x05   | void     |
+| `jump`              | 0x06   | u16      |
+| `jump_if_false`     | 0x07   | u16      |
+| `loop`              | 0x08   | u16      |
 | `true`              | 0x10   | void     |
 | `false`             | 0x11   | void     |
 | `null`              | 0x12   | void     |

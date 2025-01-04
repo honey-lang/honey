@@ -53,52 +53,6 @@ const ObjectList = std.SinglyLinkedList(*Value);
 const VariableMap = std.StringArrayHashMap(Value);
 /// The shape of the built-in functions in the VM
 const BuiltinFn = *const fn (*Self, []const Value) anyerror!?Value;
-/// A small struct to keep track of the current iterator
-const Iterator = struct {
-    index: usize,
-    iterable: *Value,
-
-    pub fn len(self: *Iterator) usize {
-        return switch (self.iterable.*) {
-            .list => |list| list.count(),
-            .dict => |dict| dict.count(),
-            inline else => std.debug.panic("Unhandled iterable type: {s}", .{@tagName(self.iterable.*)}),
-        };
-    }
-
-    /// Returns true if the iterator has a next value
-    pub fn hasNext(self: *Iterator) bool {
-        return self.index < self.len();
-    }
-
-    /// Returns the value at the given index
-    fn get(self: *Iterator, index: usize) ?Value {
-        return switch (self.iterable.*) {
-            .list => |list| list.get(index),
-            .dict => |dict| dict.get(dict.keys()[index]),
-            inline else => unreachable,
-        };
-    }
-
-    /// Returns the next value in the iterator or null if there are no more values
-    pub fn next(self: *Iterator) void {
-        self.index += 1;
-    }
-
-    /// Returns the current value in the iterator or null if there are no more values
-    pub fn currentValue(self: *Iterator) ?Value {
-        return self.get(self.index);
-    }
-
-    /// Returns the current key in the iterator or null if there are no more values
-    pub fn currentKey(self: *Iterator) ?Value {
-        return switch (self.iterable.*) {
-            .list => .{ .number = @floatFromInt(self.index) },
-            .dict => |dict| .{ .string = dict.keys()[self.index] },
-            inline else => unreachable,
-        };
-    }
-};
 
 const CurrentInstructionData = struct { opcode: Opcode, program_counter: usize };
 const CallFrame = struct { return_address: usize, return_slot: ?usize = null };
@@ -139,7 +93,7 @@ call_stack: utils.Stack(CallFrame),
 /// Holds the last value popped from the stack
 last_popped: ?Value = null,
 /// The currently active iterators
-active_iterator_stack: utils.Stack(Iterator),
+active_iterator_stack: utils.Stack(Value.Iterator),
 /// The index of the currently active iterator
 active_iterator_index: ?usize = null,
 /// The virtual machine options
@@ -167,7 +121,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .diagnostics = utils.Diagnostics.init(ally),
         .stack = utils.Stack(Value).init(ally),
         .temp_store = std.AutoArrayHashMap(u16, Value).init(ally),
-        .active_iterator_stack = utils.Stack(Iterator).init(ally),
+        .active_iterator_stack = utils.Stack(Value.Iterator).init(ally),
         .call_stack = utils.Stack(CallFrame).init(ally),
         .options = options,
         .writer = options.writer,
@@ -304,7 +258,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
     //     std.debug.print("Collecting garbage...\n", .{});
     //     try self.collectGarbage();
     // }
-    //
 
     switch (instruction) {
         .@"return" => {
@@ -347,6 +300,18 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 try dict.put(key.string, value);
             }
             try self.pushOrError(.{ .dict = dict });
+        },
+        .range => {
+            // if inclusive, we'll add 1 to the end
+            const offset: usize = if (try self.fetchAndIncrement() != 0) 1 else 0;
+            const end = try self.popOrError();
+            const start = try self.popOrError();
+
+            const range = Value.Range{
+                .start = @as(usize, @intFromFloat(start.number)),
+                .end = @as(usize, @intFromFloat(end.number)) + offset,
+            };
+            try self.pushOrError(.{ .range = range });
         },
         // constant value instructions
         .true => try self.pushOrError(Value.True),
@@ -429,11 +394,14 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .set_local => {
             const offset = try self.fetchNumber(u16);
+            // we don't need to pop & reset the stack at an offset if they match
+            if (offset == self.stack.size() - 1) {
+                return;
+            }
             const value = self.stack.pop() catch {
                 self.reportError("Local variable not found at offset {d}", .{offset});
                 return VmError.GenericError;
             };
-            // std.debug.print("- Setting local variable at offset {d}: {s}\n", .{ offset, value });
 
             self.stack.set(offset, value) catch |err| {
                 self.reportError("Failed to set local variable at offset {d}: {any}", .{ offset, err });
@@ -608,7 +576,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 return VmError.StackUnderflow;
             };
             switch (iterable) {
-                .list, .dict => {},
+                .list, .dict, .range => {},
                 inline else => {
                     self.reportError("Expected iterable to begin but got {s}", .{iterable});
                     return VmError.GenericError;
@@ -619,8 +587,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .iterable_next => {
             var iterator = try self.getActiveIterator();
             iterator.next();
-
-            // std.debug.print("Iterating over {s} at index {d}\n", .{ iterator.iterable, iterator.index });
         },
         .iterable_has_next => {
             var iterator = try self.getActiveIterator();
@@ -727,7 +693,7 @@ fn fetchConstant(self: *Self) VmError!Value {
 }
 
 /// Gets the active iterator or returns null
-fn getActiveIterator(self: *Self) VmError!*Iterator {
+fn getActiveIterator(self: *Self) VmError!*Value.Iterator {
     const index = self.active_iterator_index orelse {
         self.reportError("No active iterator found", .{});
         return VmError.GenericError;
@@ -749,7 +715,7 @@ fn removeActiveIterator(self: *Self) VmError!void {
 }
 
 /// Sets the active iterator
-fn setActiveIterator(self: *Self, iterator: Iterator) VmError!void {
+fn setActiveIterator(self: *Self, iterator: Value.Iterator) VmError!void {
     self.active_iterator_stack.push(iterator) catch return VmError.OutOfMemory;
     self.active_iterator_index = self.active_iterator_stack.size() - 1;
 }

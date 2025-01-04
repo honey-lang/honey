@@ -10,6 +10,40 @@ const wasm = @import("wasm.zig");
 
 pub const HONEY_VERSION = honey.version;
 
+pub fn join(vm: *Vm, args: []const Value) !?Value {
+    if (args.len != 2) {
+        return error.InvalidNumberOfArguments;
+    }
+
+    var items = args[0];
+    const separator = args[1];
+
+    if (!items.isIterable()) {
+        return error.UnexpectedValueType;
+    }
+
+    if (separator != .string) {
+        return error.UnexpectedValueType;
+    }
+
+    var iterator = Value.Iterator{ .index = 0, .iterable = &items };
+
+    var string = std.ArrayList(u8).init(vm.allocator());
+    defer string.deinit();
+
+    while (iterator.hasNext()) {
+        const value = iterator.currentValue() orelse break;
+
+        try string.writer().print("{s}", .{value});
+        iterator.next();
+        if (iterator.hasNext()) {
+            try string.writer().writeAll(separator.string);
+        }
+    }
+
+    return try vm.createString(string.items);
+}
+
 pub fn rand(_: *Vm, args: []const Value) !?Value {
     var prng = std.rand.Xoshiro256.init(if (builtin.target.isWasm()) wasm: {
         const seed = wasm.generateSeed();

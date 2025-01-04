@@ -53,6 +53,8 @@ const Error = error{
     OutOfMemory,
     /// Occurs when a user tries to access a local variable that is out of bounds
     LocalOutOfBounds,
+    /// Occurs when a user tries to declare a local variable that already exists in scope
+    LocalAlreadyExists,
     /// Occurs when a variable already exists in either the current scope or a parent scope
     VariableAlreadyExists,
     /// Occurs when the compiler encounters an unexpected type
@@ -220,15 +222,20 @@ const ScopeContext = struct {
 
 /// A raw instruction list type
 const InstructionList = std.ArrayList(u8);
-const CurrentFunction = struct {
+pub const Function = struct {
     name: []const u8,
+    param_count: u8,
     instructions: InstructionList,
 
-    pub fn init(name: []const u8, ally: std.mem.Allocator) CurrentFunction {
-        return .{ .name = name, .instructions = InstructionList.init(ally) };
+    pub fn init(name: []const u8, param_count: u8, ally: std.mem.Allocator) Function {
+        return .{
+            .name = name,
+            .param_count = param_count,
+            .instructions = InstructionList.init(ally),
+        };
     }
 
-    pub fn deinit(self: *CurrentFunction) void {
+    pub fn deinit(self: *Function) void {
         self.instructions.deinit();
     }
 };
@@ -250,9 +257,9 @@ last_compiled_instr: ?CompiledInstruction = null,
 /// The instruction before the last instruction
 penult_compiled_instr: ?CompiledInstruction = null,
 /// The current function to emit the bytecode into
-current_func: ?CurrentFunction = null,
+current_func: ?Function = null,
 /// The list of functions that have been declared in the program
-declared_funcs: std.ArrayList(CurrentFunction),
+declared_funcs: std.ArrayList(Function),
 /// Context about the current scope
 scope_context: ScopeContext,
 /// The writer used for error reporting
@@ -267,7 +274,7 @@ pub fn init(ally: std.mem.Allocator, program: ast.Program, error_writer: std.io.
         .instructions = InstructionList.init(ally),
         .constants = std.ArrayList(Value).init(ally),
         .declared_global_identifiers = GlobalIdentifierMap.init(ally),
-        .declared_funcs = std.ArrayList(CurrentFunction).init(ally),
+        .declared_funcs = std.ArrayList(Function).init(ally),
         .scope_context = ScopeContext.init(ally),
         .error_writer = error_writer,
     };
@@ -284,8 +291,8 @@ pub fn deinit(self: *Self) void {
     self.scope_context.deinit();
 }
 
-fn enterFunction(self: *Self, name: []const u8) void {
-    self.current_func = CurrentFunction.init(name, self.arena.allocator());
+fn enterFunction(self: *Self, name: []const u8, param_count: u8) void {
+    self.current_func = Function.init(name, param_count, self.arena.allocator());
 }
 
 fn exitFunction(self: *Self) Error!void {
@@ -336,6 +343,7 @@ fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction
 
     var stream = std.io.fixedBufferStream(self.instructions.items);
     const prev_index = stream.pos;
+
     stream.seekTo(old.index) catch return Error.OpcodeReplaceFailure;
     try encode(stream.writer(), new_instr);
     stream.seekTo(prev_index) catch return Error.OpcodeReplaceFailure;
@@ -345,6 +353,7 @@ fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction
 fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
     // size of the opcode + size of the instruction
     const op: Opcode = std.meta.activeTag(instruction);
+
     op.encode(writer) catch return Error.OpcodeEncodeFailure;
 
     switch (instruction) {
@@ -397,6 +406,7 @@ pub fn report(self: *Self) void {
 pub fn compile(self: *Self) !Bytecode {
     for (self.program.statements.items) |statement| {
         try self.compileStatement(statement);
+        // std.log.info("Statement: {s}", .{statement});
     }
     // add return from body
     try self.addInstruction(.@"return");
@@ -553,11 +563,15 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         },
         .@"fn" => |inner| {
             var found_return = false;
-            self.enterFunction(inner.name);
+            self.enterFunction(inner.name, @intCast(inner.parameters.len));
             // compile the block's statements & handle the scope depth
             self.scope_context.current_depth += 1;
             // Declare parameters as local values
             for (inner.parameters) |parameter| {
+                if (self.scope_context.hasLocal(parameter.identifier)) {
+                    self.reportError("Duplicate parameter name `{s}` in function `{s}`", .{ parameter.identifier, inner.name });
+                    return error.LocalAlreadyExists;
+                }
                 _ = try self.scope_context.addLocal(parameter.identifier, true);
             }
 
@@ -618,7 +632,6 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 return Error.UnsupportedStatement;
             }
         },
-        // inline else => return Error.UnsupportedStatement,
     }
 }
 
@@ -767,119 +780,64 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.addInstruction(.void);
         },
         .for_expr => |inner| {
-            // todo: list iteration
-            switch (inner.expr.*) {
-                .range => |range| {
-                    var jif_target: CompiledInstruction = undefined;
-                    // the loop should start before the condition
-                    try self.compileExpression(range.start.*);
+            // self.diagnostics.report("expression {s} is not iterable", .{inner.expr});
+            // return Error.UnsupportedStatement;
+            // compile the expression and iterate over it
+            var jif_target: CompiledInstruction = undefined;
 
-                    // todo: multi-capture
-                    const capture_name = inner.captures[0].identifier;
-                    const capture_offset = try self.scope_context.addLocal(capture_name, false);
+            // the loop should start before the condition
+            try self.compileExpression(inner.expr.*);
 
-                    self.scope_context.beginLoop(expression);
-                    defer self.scope_context.endLoop();
+            // todo: multi-captures
+            // how should we handle multi-captures with dictionaries? (e.g., for (dict_1, dict_2) {})
+            const capture_value_name = inner.captures[0].identifier;
+            // const capture_key_name: ?[]const u8 = if (inner.captures.len > 1) inner.captures[1].identifier else null;
 
-                    const loop_start_instr = try self.getLastInstruction();
+            const capture_value_offset = try self.scope_context.addLocal(capture_value_name, false);
+            // const capture_key_offset: ?u16 = if (capture_key_name) |name| try self.scope_context.addLocal(
+            //     name,
+            //     false,
+            // ) else null;
 
-                    try self.compileExpression(range.end.*);
-                    try self.addInstruction(.{ .get_local = capture_offset });
-                    try self.addInstruction(if (range.inclusive) .gt_eql else .gt);
+            self.scope_context.beginLoop(expression);
+            defer self.scope_context.endLoop();
 
-                    try self.addInstruction(.{ .jump_if_false = MaxOffset });
-                    jif_target = try self.getLastInstruction();
+            try self.addInstruction(.iterable_begin);
 
-                    try self.compileStatement(inner.body.*);
+            const loop_start_instr = try self.getLastInstruction();
 
-                    const post_loop_expr = try self.getLastInstruction();
+            try self.addInstruction(.iterable_has_next);
+            try self.addInstruction(.{ .jump_if_false = MaxOffset });
+            jif_target = try self.getLastInstruction();
 
-                    // increment the capture variable
-                    try self.addInstruction(.{ .get_local = capture_offset });
-                    // todo: stepping?
-                    const increment_const = try self.addConstant(.{ .number = 1 });
-                    try self.addInstruction(.{ .@"const" = increment_const });
-                    // todo: decrementing loops? e.g., 10..0
-                    try self.addInstruction(.add);
-                    try self.addInstruction(.{ .set_local = capture_offset });
+            try self.addInstruction(.iterable_value);
+            try self.addInstruction(.{ .set_local = capture_value_offset });
 
-                    const step_instr = try self.getLastInstruction();
+            // if (capture_key_offset) |offset| {
+            //     try self.addInstruction(.iterable_key);
+            //     try self.addInstruction(.{ .set_local = offset });
+            // }
 
-                    try self.addInstruction(.{ .loop = @intCast(step_instr.nextInstructionIndex() - loop_start_instr.index) });
+            try self.compileStatement(inner.body.*);
 
-                    const loop_end_instr = try self.getLastInstruction();
+            const post_loop_expr = try self.getLastInstruction();
 
-                    // remove local after loop is done
-                    try self.scope_context.removeLocal(capture_name);
-                    try self.addInstruction(.pop);
-                    // todo: only add a void instr if the loop body is empty
-                    try self.addInstruction(.void);
+            try self.addInstruction(.iterable_next);
 
-                    try self.scope_context.patchLoop(self, post_loop_expr, loop_end_instr);
-                    try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_end_instr.index - jif_target.index) });
-                },
-                inline else => {
-                    // self.diagnostics.report("expression {s} is not iterable", .{inner.expr});
-                    // return Error.UnsupportedStatement;
-                    // compile the expression and iterate over it
-                    var jif_target: CompiledInstruction = undefined;
+            try self.addInstruction(.{ .loop = MaxOffset });
 
-                    // the loop should start before the condition
-                    try self.compileExpression(inner.expr.*);
+            const loop_target = try self.getLastInstruction();
 
-                    // todo: multi-captures
-                    // how should we handle multi-captures with dictionaries? (e.g., for (dict_1, dict_2) {})
-                    const capture_value_name = inner.captures[0].identifier;
-                    // const capture_key_name: ?[]const u8 = if (inner.captures.len > 1) inner.captures[1].identifier else null;
+            // remove locals after loop is done
+            try self.scope_context.removeLocal(capture_value_name);
+            // if (capture_key_name) |name| try self.scope_context.removeLocal(name);
+            try self.addInstruction(.iterable_end);
+            // todo: only add a void instr if the loop body is empty
+            try self.addInstruction(.void);
 
-                    const capture_value_offset = try self.scope_context.addLocal(capture_value_name, false);
-                    // const capture_key_offset: ?u16 = if (capture_key_name) |name| try self.scope_context.addLocal(
-                    //     name,
-                    //     false,
-                    // ) else null;
-
-                    self.scope_context.beginLoop(expression);
-                    defer self.scope_context.endLoop();
-
-                    try self.addInstruction(.iterable_begin);
-
-                    const loop_start_instr = try self.getLastInstruction();
-
-                    try self.addInstruction(.iterable_has_next);
-                    try self.addInstruction(.{ .jump_if_false = MaxOffset });
-                    jif_target = try self.getLastInstruction();
-
-                    try self.addInstruction(.iterable_value);
-                    try self.addInstruction(.{ .set_local = capture_value_offset });
-
-                    // if (capture_key_offset) |offset| {
-                    //     try self.addInstruction(.iterable_key);
-                    //     try self.addInstruction(.{ .set_local = offset });
-                    // }
-
-                    try self.compileStatement(inner.body.*);
-
-                    const post_loop_expr = try self.getLastInstruction();
-
-                    try self.addInstruction(.iterable_next);
-
-                    try self.addInstruction(.{ .loop = MaxOffset });
-
-                    const loop_target = try self.getLastInstruction();
-
-                    // remove locals after loop is done
-                    try self.scope_context.removeLocal(capture_value_name);
-                    // if (capture_key_name) |name| try self.scope_context.removeLocal(name);
-                    try self.addInstruction(.iterable_end);
-                    try self.addInstruction(.pop);
-                    // todo: only add a void instr if the loop body is empty
-                    try self.addInstruction(.void);
-
-                    try self.scope_context.patchLoop(self, post_loop_expr, loop_target);
-                    try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_target.index - jif_target.index) });
-                    try self.replace(loop_target, .{ .loop = @intCast(loop_target.nextInstructionIndex() - loop_start_instr.nextInstructionIndex()) });
-                },
-            }
+            try self.scope_context.patchLoop(self, post_loop_expr, loop_target);
+            try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_target.index - jif_target.index) });
+            try self.replace(loop_target, .{ .loop = @intCast(loop_target.nextInstructionIndex() - loop_start_instr.nextInstructionIndex()) });
         },
         .index => |value| {
             try self.compileExpression(value.lhs.*);
@@ -929,6 +887,11 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
                 try self.compileExpression(value);
             }
             try self.addInstruction(.{ .dict = @intCast(dict.keys.len) });
+        },
+        .range => |value| {
+            try self.compileExpression(value.start.*);
+            try self.compileExpression(value.end.*);
+            try self.addInstruction(.{ .range = value.inclusive });
         },
         .boolean => |value| try self.addInstruction(if (value) .true else .false),
         .null => try self.addInstruction(.null),

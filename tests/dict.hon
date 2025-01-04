@@ -1,22 +1,32 @@
 const language = {
     name: "honey",
-    version: "v0.1.1",
+    version: "v0.2.0",
     description: "A small embeddable scripting language, built in Zig",
     versions: [
         { version: "v0.0.1", description: "Initial release" },
         { version: "v0.1.0", description: "Added support for lists & dictionaries" },
         { version: "v0.1.1", description: "Better error messages!" },
+        { version: "v0.1.2", description: "Implement better number parsing" },
+        { version: "v0.2.0", description: "Functional support!" },
     ],
 };
 
 // name: "honey"
 const name = language.name;
-// version: v0.1.0
+// version: v0.2.0
 const version = language["version"];
 
 @println("Honey ", version, " - ", name);
 @println("Description: ", language.description);
 @println("Versions:");
 for (language.versions) |version_data| {
-    @println(" - ", version_data.version, ": ", version_data.description, if (version_data.version == version) " (latest)" else "");
+  @println(version_data);
+}
 
+fn hello_world(i: number, i: string) {
+    @println("Hello, ", i);
+}
+
+for (0...10) |i| {
+    hello_world(i, i);
+}

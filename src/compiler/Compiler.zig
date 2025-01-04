@@ -547,13 +547,11 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
         },
         .block => |inner| {
             // compile the block's statements & handle the scope depth
-            {
-                self.scope_context.current_depth += 1;
-                defer self.scope_context.current_depth -= 1;
-                for (inner.statements) |stmt| {
-                    try self.compileStatement(stmt);
-                }
+            self.scope_context.current_depth += 1;
+            for (inner.statements) |stmt| {
+                try self.compileStatement(stmt);
             }
+            self.scope_context.current_depth -= 1;
 
             // pop after the block is done
             while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {

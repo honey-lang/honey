@@ -304,6 +304,14 @@ fn exitFunction(self: *Self) Error!void {
     return Error.NotInFunction;
 }
 
+/// Gets the current instruction list the compiler is emitting to
+fn getCurrentInstructionList(self: *Self) *InstructionList {
+    return if (self.current_func) |*func|
+        &func.instructions
+    else
+        &self.instructions;
+}
+
 /// Cleans the current scope by adding `pop` instructions and removing them from our internal context
 fn cleanScope(self: *Self) Error!void {
     while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
@@ -315,13 +323,11 @@ fn cleanScope(self: *Self) Error!void {
 /// Adds an operation to the bytecode
 fn addInstruction(self: *Self, instruction: opcodes.Instruction) Error!void {
     // if we're in a function, use our func instructions writer. otherwise, write to global program
-    const writer: InstructionList.Writer = if (self.current_func) |*current|
-        current.instructions.writer()
-    else
-        self.instructions.writer();
+    const instructions = self.getCurrentInstructionList();
+    const writer: InstructionList.Writer = instructions.writer();
 
-    const index = self.instructions.items.len;
-    try encode(writer, instruction);
+    const index = instructions.items.len;
+    try self.encode(writer, instruction);
 
     // set last as penultimate instr
     self.penult_compiled_instr = self.last_compiled_instr;
@@ -341,23 +347,30 @@ fn replace(self: *Self, old: CompiledInstruction, new_instr: opcodes.Instruction
         return error.OpcodeReplaceMismatch;
     }
 
-    var stream = std.io.fixedBufferStream(self.instructions.items);
+    // If we're in a function use those items
+    const instructions = self.getCurrentInstructionList();
+
+    var stream = std.io.fixedBufferStream(instructions.items);
     const prev_index = stream.pos;
 
     stream.seekTo(old.index) catch return Error.OpcodeReplaceFailure;
-    try encode(stream.writer(), new_instr);
+    try self.encode(stream.writer(), new_instr);
     stream.seekTo(prev_index) catch return Error.OpcodeReplaceFailure;
 }
 
 /// Encodes an instruction into the given writer
-fn encode(writer: anytype, instruction: opcodes.Instruction) Error!void {
+fn encode(self: *Self, writer: anytype, instruction: opcodes.Instruction) Error!void {
     // size of the opcode + size of the instruction
     const op: Opcode = std.meta.activeTag(instruction);
 
-    op.encode(writer) catch return Error.OpcodeEncodeFailure;
+    op.encode(writer) catch |err| {
+        self.reportError("Unable to encode opcode {s}: {!}", .{ @tagName(op), err });
+        return Error.OpcodeEncodeFailure;
+    };
 
     switch (instruction) {
-        inline else => |value| opcodes.encode(value, writer) catch {
+        inline else => |value| opcodes.encode(value, writer) catch |err| {
+            self.reportError("Unable to encode value {any}: {!}", .{ value, err });
             return Error.OpcodeEncodeFailure;
         },
     }
@@ -406,7 +419,6 @@ pub fn report(self: *Self) void {
 pub fn compile(self: *Self) !Bytecode {
     for (self.program.statements.items) |statement| {
         try self.compileStatement(statement);
-        // std.log.info("Statement: {s}", .{statement});
     }
     // add return from body
     try self.addInstruction(.@"return");
@@ -553,11 +565,8 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             }
             self.scope_context.current_depth -= 1;
 
-            // pop after the block is done
-            while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
-                try self.addInstruction(.pop);
-                _ = self.scope_context.popLocal();
-            }
+            // clean scope after we are done
+            try self.cleanScope();
         },
         .@"fn" => |inner| {
             var found_return = false;
@@ -578,7 +587,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 // if we find a return, we will clean up
                 if (stmt == .@"return") {
                     self.scope_context.current_depth -= 1;
-                    try self.compileStatement(stmt);
+                    // try self.compileStatement(stmt);
                     found_return = true;
                     break;
                 }
@@ -721,22 +730,23 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.compileExpression(condition_data.condition.*);
             try self.addInstruction(.{ .jump_if_false = MaxOffset });
             jif_instr = try self.getLastInstruction();
-            const jif_offset_start = self.instructions.items.len;
+            const instructions = self.getCurrentInstructionList();
+            const jif_offset_start = instructions.items.len;
 
             // compile body & add jump after the body
             try self.compileIfBody(condition_data.body);
             try self.addInstruction(.{ .jump = MaxOffset });
-            const jfwd_offset_start = self.instructions.items.len;
+            const jfwd_offset_start = instructions.items.len;
             jump_instr = try self.getLastInstruction();
 
-            const jif_offset_end = self.instructions.items.len;
+            const jif_offset_end = instructions.items.len;
             // if there's an else block, compile it. otherwise, just add a void instruction
             if (inner.alternative) |alternative| {
                 try self.compileIfBody(alternative);
             } else {
                 try self.addInstruction(.void);
             }
-            const jfwd_offset_end = self.instructions.items.len;
+            const jfwd_offset_end = instructions.items.len;
 
             try self.replace(jif_instr, .{ .jump_if_false = @intCast(jif_offset_end - jif_offset_start) });
             try self.replace(jump_instr, .{ .jump = @intCast(jfwd_offset_end - jfwd_offset_start) });

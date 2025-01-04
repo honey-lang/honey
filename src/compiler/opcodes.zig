@@ -204,6 +204,7 @@ pub const Instruction = union(Opcode) {
 pub fn encode(value: anytype, writer: anytype) !void {
     const ValueType = @TypeOf(value);
     const value_type_info = @typeInfo(ValueType);
+
     switch (value_type_info) {
         .Bool => try writer.writeInt(u8, if (value) 1 else 0, .big),
         .Int => try writer.writeInt(ValueType, value, .big),

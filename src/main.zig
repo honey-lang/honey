@@ -89,7 +89,7 @@ pub fn main() !void {
     }) catch |err| switch (err) {
         // if the error is just telling us we encountered errors,
         // we shouldn't barf the stacktrace back onto the user
-        error.EncounteredErrors => return,
+        // error.EncounteredErrors => return,
         inline else => return err,
     };
     defer result.deinit();

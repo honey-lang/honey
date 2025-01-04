@@ -301,7 +301,7 @@ pub const Value = union(enum) {
                 // but in general, 0..10 == 0...9
 
                 // TODO: Implement custom periods
-                try writer.print("{d}...{d}", .{ value.start, value.end });
+                try writer.print("{d}..{d}", .{ value.start, value.end });
             },
             .func => |value| try writer.print("fn {s}(...) {{ }}", .{value.name}),
             inline else => try writer.print("{s}", .{@tagName(self)}),

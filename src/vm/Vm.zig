@@ -27,6 +27,8 @@ const VmError = error{
     StackOverflow,
     /// `StackUnderflow` is returned when the a pop is attempted on an empty stack
     StackUnderflow,
+    /// `InvalidStackOffset` is returned when the VM attempts to fetch a value from the stack at an offset that doesn't exist
+    InvalidStackOffset,
     /// `InvalidOpcode` is returned when an invalid opcode is encountered
     InvalidOpcode,
     /// `VariableNotFound` is returned when a variable is not found in the VM
@@ -55,7 +57,11 @@ const VariableMap = std.StringArrayHashMap(Value);
 const BuiltinFn = *const fn (*Self, []const Value) anyerror!?Value;
 
 const CurrentInstructionData = struct { opcode: Opcode, program_counter: usize };
-const CallFrame = struct { return_address: usize, return_slot: ?usize = null };
+const CallFrame = struct {
+    return_address: usize,
+    return_slot: ?usize = null,
+    stack_pointer: usize = 0,
+};
 
 /// The allocator used for memory allocation in the VM
 ally: std.mem.Allocator,
@@ -266,8 +272,12 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.running = false;
                 return;
             }
+            std.log.info("Stack Post-Call:", .{});
+            self.stack.dump();
+
             const frame = self.call_stack.pop() catch unreachable;
             self.program_counter = frame.return_address;
+            self.stack_pointer = frame.stack_pointer;
         },
         .@"const" => {
             const constant = try self.fetchConstant();
@@ -424,11 +434,11 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .get_local => {
             const offset = try self.fetchNumber(u16);
-            const value = self.stack.get(offset) catch {
+            // ensure we shift by the stack pointer when fetching at the offset
+            const value = self.getOrError(offset) catch |err| {
                 self.reportError("Local variable not found at offset {d}", .{offset});
-                return VmError.GenericError;
+                return err;
             };
-            // std.debug.print("* Getting local variable at offset {d}: {s}\n", .{ offset, value });
 
             try self.pushOrError(value);
         },
@@ -559,16 +569,33 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
 
             // 2. Fetch argument count
             const arg_count = try self.fetchNumber(u16);
-            _ = arg_count;
+
+            std.log.info("Calling {s}:", .{func_name.identifier});
+            self.stack.dump();
+
+            for (0..arg_count) |i| {
+                // clone and push onto stack
+                const item = self.getOrError(i) catch {
+                    self.reportError("Unable to fetch arguments from stack for function call to '{s}'", .{func_name.identifier});
+                    return VmError.GenericError;
+                };
+                try self.pushOrError(item);
+            }
 
             // 3. Create call frame
-            self.call_stack.push(CallFrame{ .return_address = self.program_counter }) catch |err| {
+            const frame = CallFrame{
+                .return_address = self.program_counter,
+                .stack_pointer = self.stack_pointer,
+            };
+            self.call_stack.push(frame) catch |err| {
                 self.reportError("Unable to push call frame onto stack: {any}", .{err});
                 return VmError.OutOfMemory;
             };
 
             // 4. Call function by jumping to it
             self.program_counter = func_offset;
+            // 5. Offset stack pointer
+            self.stack_pointer += arg_count;
         },
         .iterable_begin => {
             var iterable = self.stack.peek() catch {
@@ -728,6 +755,18 @@ fn pushOrError(self: *Self, value: Value) VmError!void {
         return error.StackOverflow;
     };
     // self.stack.dump();
+}
+
+/// Attempts to get a value from the stack or reports and returns an error
+fn getOrError(self: *Self, offset: usize) VmError!Value {
+    return self.stack.get(self.stack_pointer + offset) catch |err| {
+        self.reportError("Failed to retrieve item on stack at offset {d} (original: {d}): {any}", .{
+            self.stack_pointer + offset,
+            offset,
+            err,
+        });
+        return error.InvalidStackOffset;
+    };
 }
 
 fn freeValue(self: *Self, value: Value) void {

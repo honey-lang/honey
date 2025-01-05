@@ -202,7 +202,6 @@ const ScopeContext = struct {
 
     /// Attempts to add a local variable to the list of local variables and return its index
     fn addLocal(self: *ScopeContext, name: []const u8, is_const: bool) Error!u16 {
-        std.log.info("{s} = {d}", .{ name, self.local_variables.len });
         self.local_variables.append(Local{
             .name = name,
             .depth = self.current_depth,

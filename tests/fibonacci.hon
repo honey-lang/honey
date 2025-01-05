@@ -1,0 +1,11 @@
+
+// Recursively calculates the fibonacci sequence
+fn fibonacci(n: number) {
+    if (n == 0 or n == 1) {
+        return 1;
+    }
+    return fibonacci(n) + fibonacci(n - 1);
+}
+
+const N = 5;
+@println("Fibonacci(", N, ") = ", fibonacci(N));

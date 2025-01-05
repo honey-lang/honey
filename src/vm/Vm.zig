@@ -8,6 +8,7 @@ const Compiler = @import("../compiler/Compiler.zig");
 const opcodes = @import("../compiler/opcodes.zig");
 const Opcode = opcodes.Opcode;
 const Bytecode = @import("../compiler/Bytecode.zig");
+const FunctionMetadata = Bytecode.FunctionMetadata;
 const Value = @import("../compiler/value.zig").Value;
 
 const Self = @This();
@@ -16,6 +17,8 @@ const BuiltinLibrary = if (@import("builtin").target.isWasm())
     @import("../wasm_builtins.zig")
 else
     @import("../builtins.zig");
+
+const DebugBuiltinLibrary = @import("../debug_builtins.zig");
 
 const HexFormat = "0x{x:0<2}";
 
@@ -45,6 +48,8 @@ const VmError = error{
     ListAccessOutOfBounds,
     /// `InvalidListKey` is returned when a program attempts to access a list value via a non-number value
     InvalidListKey,
+    /// `ArgumentCountMismatch` occurs when a program attempts to call a function with an unexpected number of arguments
+    ArgumentCountMismatch,
     /// `GenericError` is returned when an error occurs that does not fit into any other category
     GenericError,
 };
@@ -58,9 +63,12 @@ const BuiltinFn = *const fn (*Self, []const Value) anyerror!?Value;
 
 const CurrentInstructionData = struct { opcode: Opcode, program_counter: usize };
 const CallFrame = struct {
+    /// The address to return to after the call is over
     return_address: usize,
-    return_slot: ?usize = null,
-    stack_pointer: usize = 0,
+    /// The offset on the stack where this call's locals begin
+    frame_pointer: usize,
+    /// The number of variables passed to this call
+    arg_count: usize,
 };
 
 /// The allocator used for memory allocation in the VM
@@ -73,8 +81,8 @@ objects: ObjectList = .{},
 global_constants: VariableMap,
 /// The global variables in the VM
 global_variables: VariableMap,
-/// A mapping of function names to their offsets in the program
-funcs: std.StringArrayHashMap(usize),
+/// A mapping of function names to their metadata in the program
+funcs: std.StringArrayHashMap(FunctionMetadata),
 /// Built-in functions for the VM
 builtins: std.StringArrayHashMap(BuiltinFn),
 /// Diagnostics for the VM
@@ -88,8 +96,8 @@ current_instruction_data: CurrentInstructionData = .{
     .opcode = undefined,
     .program_counter = 0,
 },
-/// The stack pointer
-stack_pointer: usize = 0,
+/// A pointer that refers to the top of the stack relative to the current frame
+frame_pointer: usize = 0,
 /// The stack itself
 stack: utils.Stack(Value),
 /// The stack used to track temporary values
@@ -133,6 +141,7 @@ pub fn init(bytecode: Bytecode, ally: std.mem.Allocator, options: VmOptions) Sel
         .writer = options.writer,
     };
     self.addBuiltinLibrary(BuiltinLibrary) catch unreachable;
+    self.addBuiltinLibrary(DebugBuiltinLibrary) catch unreachable;
     return self;
 }
 
@@ -239,6 +248,20 @@ pub fn getLastPopped(self: *Self) ?Value {
     return self.last_popped;
 }
 
+/// Returns the current call frame
+pub fn getCurrentFrame(self: *Self) VmError!CallFrame {
+    return self.call_stack.peek() catch |err| {
+        self.reportError("Unable to fetch current call frame: {!}", .{err});
+        return VmError.GenericError;
+    };
+}
+
+/// Returns the arguments passed to the current frame
+pub fn getFrameArgs(self: *Self) ![]const Value {
+    const frame = try self.getCurrentFrame();
+    return self.stack.data.items[self.frame_pointer..(self.frame_pointer + frame.arg_count)];
+}
+
 /// Runs the VM
 pub fn run(self: *Self) VmError!void {
     if (self.options.dump_bytecode) {
@@ -272,12 +295,10 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.running = false;
                 return;
             }
-            std.log.info("Stack Post-Call:", .{});
-            self.stack.dump();
 
             const frame = self.call_stack.pop() catch unreachable;
             self.program_counter = frame.return_address;
-            self.stack_pointer = frame.stack_pointer;
+            self.frame_pointer = frame.frame_pointer;
         },
         .@"const" => {
             const constant = try self.fetchConstant();
@@ -404,10 +425,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         },
         .set_local => {
             const offset = try self.fetchNumber(u16);
-            // we don't need to pop & reset the stack at an offset if they match
-            if (offset == self.stack.size() - 1) {
-                return;
-            }
             const value = self.stack.pop() catch {
                 self.reportError("Local variable not found at offset {d}", .{offset});
                 return VmError.GenericError;
@@ -439,7 +456,6 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
                 self.reportError("Local variable not found at offset {d}", .{offset});
                 return err;
             };
-
             try self.pushOrError(value);
         },
         .get_index => {
@@ -562,7 +578,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
         .call_func => {
             // 1. Find function (or throw error if it doesn't exist)
             const func_name = try self.fetchConstant();
-            const func_offset = self.funcs.get(func_name.identifier) orelse {
+            const func_metadata: FunctionMetadata = self.funcs.get(func_name.identifier) orelse {
                 self.reportError("Unable to call undefined function '{s}'", .{func_name.identifier});
                 return VmError.GenericError;
             };
@@ -570,22 +586,21 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             // 2. Fetch argument count
             const arg_count = try self.fetchNumber(u16);
 
-            std.log.info("Calling {s}:", .{func_name.identifier});
-            self.stack.dump();
-
-            for (0..arg_count) |i| {
-                // clone and push onto stack
-                const item = self.getOrError(i) catch {
-                    self.reportError("Unable to fetch arguments from stack for function call to '{s}'", .{func_name.identifier});
-                    return VmError.GenericError;
-                };
-                try self.pushOrError(item);
+            if (arg_count != func_metadata.param_count) {
+                self.reportError("[{s}] Expected {d} {s} but got {d}", .{
+                    func_metadata.name,
+                    func_metadata.param_count,
+                    if (func_metadata.param_count == 1) "argument" else "arguments",
+                    arg_count,
+                });
+                return VmError.ArgumentCountMismatch;
             }
 
             // 3. Create call frame
             const frame = CallFrame{
                 .return_address = self.program_counter,
-                .stack_pointer = self.stack_pointer,
+                .frame_pointer = self.frame_pointer,
+                .arg_count = arg_count,
             };
             self.call_stack.push(frame) catch |err| {
                 self.reportError("Unable to push call frame onto stack: {any}", .{err});
@@ -593,9 +608,9 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             };
 
             // 4. Call function by jumping to it
-            self.program_counter = func_offset;
-            // 5. Offset stack pointer
-            self.stack_pointer += arg_count;
+            self.program_counter = func_metadata.program_offset;
+            // 5. Offset frame pointer by the number of locals/args we pushed
+            self.frame_pointer = self.stack.size();
         },
         .iterable_begin => {
             var iterable = self.stack.peek() catch {
@@ -759,9 +774,9 @@ fn pushOrError(self: *Self, value: Value) VmError!void {
 
 /// Attempts to get a value from the stack or reports and returns an error
 fn getOrError(self: *Self, offset: usize) VmError!Value {
-    return self.stack.get(self.stack_pointer + offset) catch |err| {
+    return self.stack.get(self.frame_pointer + offset) catch |err| {
         self.reportError("Failed to retrieve item on stack at offset {d} (original: {d}): {any}", .{
-            self.stack_pointer + offset,
+            self.frame_pointer + offset,
             offset,
             err,
         });

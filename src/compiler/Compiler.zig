@@ -9,6 +9,7 @@ const Opcode = opcodes.Opcode;
 const Instruction = opcodes.Instruction;
 const Value = @import("value.zig").Value;
 const Bytecode = @import("Bytecode.zig");
+const FunctionMetadata = Bytecode.FunctionMetadata;
 
 /// This represents a compiled instruction that has been added to the bytecode
 const CompiledInstruction = struct {
@@ -201,6 +202,7 @@ const ScopeContext = struct {
 
     /// Attempts to add a local variable to the list of local variables and return its index
     fn addLocal(self: *ScopeContext, name: []const u8, is_const: bool) Error!u16 {
+        std.log.info("{s} = {d}", .{ name, self.local_variables.len });
         self.local_variables.append(Local{
             .name = name,
             .depth = self.current_depth,
@@ -423,11 +425,16 @@ pub fn compile(self: *Self) !Bytecode {
     // add return from body
     try self.addInstruction(.@"return");
 
-    var func_map = std.StringArrayHashMap(usize).init(self.arena.allocator());
+    var metadata_map = std.StringArrayHashMap(FunctionMetadata).init(self.arena.allocator());
     // append all of our declared functions after the body of the main program
     for (self.declared_funcs.items) |*func| {
+        const metadata = FunctionMetadata{
+            .name = func.name,
+            .param_count = func.param_count,
+            .program_offset = self.instructions.items.len,
+        };
         // map our function names to their offset in the program
-        try func_map.put(func.*.name, self.instructions.items.len);
+        try metadata_map.put(func.*.name, metadata);
         try self.instructions.appendSlice(func.*.instructions.items);
         func.deinit();
     }
@@ -435,7 +442,7 @@ pub fn compile(self: *Self) !Bytecode {
     return .{
         .instructions = self.instructions.items,
         .constants = self.constants.items,
-        .funcs = func_map,
+        .funcs = metadata_map,
     };
 }
 
@@ -569,7 +576,6 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             try self.cleanScope();
         },
         .@"fn" => |inner| {
-            var found_return = false;
             self.enterFunction(inner.name, @intCast(inner.parameters.len));
             // compile the block's statements & handle the scope depth
             self.scope_context.current_depth += 1;
@@ -583,22 +589,21 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             }
 
             const fn_decl: ast.FunctionDeclaration = inner;
-            for (fn_decl.body.statements) |stmt| {
+            // compile the statements -- if there is a return, we break with true
+            const found_return: bool = for (fn_decl.body.statements) |stmt| {
                 // if we find a return, we will clean up
                 if (stmt == .@"return") {
                     self.scope_context.current_depth -= 1;
-                    // try self.compileStatement(stmt);
-                    found_return = true;
-                    break;
+                    try self.compileStatement(stmt);
+                    break true;
                 }
                 try self.compileStatement(stmt);
-            }
+            } else false;
 
             // if the function didn't have a return, we will clean our scope and add the instr
             if (!found_return) {
                 self.scope_context.current_depth -= 1;
-                try self.cleanScope();
-                try self.addInstruction(.@"return");
+                try self.compileStatement(.{ .@"return" = .{ .expression = null } });
             }
 
             try self.exitFunction();

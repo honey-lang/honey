@@ -6,12 +6,18 @@ const Value = @import("value.zig").Value;
 
 const Self = @This();
 
+pub const FunctionMetadata = struct {
+    name: []const u8,
+    param_count: u8,
+    program_offset: usize,
+};
+
 /// The generated instructions
 instructions: []const u8,
 /// The constant pool for which the instructions can refer to
 constants: []const Value,
 /// A mapping of function names to their offsets in the program
-funcs: std.StringArrayHashMap(usize),
+funcs: std.StringArrayHashMap(FunctionMetadata),
 
 /// Dumps the formatted instruction data into the provided writer
 pub fn dump(self: Self, writer: anytype) !void {
@@ -35,7 +41,7 @@ pub fn format(self: Self, _: []const u8, _: std.fmt.FormatOptions, writer: anyty
     defer index_map.deinit();
     var iterator = self.funcs.iterator();
     while (iterator.next()) |entry| {
-        try index_map.put(entry.value_ptr.*, entry.key_ptr.*);
+        try index_map.put(entry.value_ptr.program_offset, entry.key_ptr.*);
     }
     while (index < self.instructions.len) {
         // if we find an index that maps to a func name, print it out

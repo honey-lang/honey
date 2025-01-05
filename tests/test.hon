@@ -1,15 +1,8 @@
-
-
-fn print_range(input: range, iterations: number) {
+fn recursive_countdown(iterations: int) {
     if (iterations <= 0) {
         return;
     }
-    @println("Input ", iterations, ": ", @join(input, ", "));
-    print_range(input, iterations - 1);
+    recursive_countdown(iterations - 1);
 }
 
-fn print_nested_range(first: range, second: range) {
-    @println("Input: ", @join(second, ", "));
-}
-
-print_range(0...5, 2);
+recursive_countdown(10);

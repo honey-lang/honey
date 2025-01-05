@@ -1,8 +1,10 @@
 fn recursive_countdown(iterations: int) {
     if (iterations <= 0) {
+        @println("Blastoff!");
         return;
     }
+    @println(iterations, "...");
     recursive_countdown(iterations - 1);
 }
 
-recursive_countdown(10);
+recursive_countdown(3);

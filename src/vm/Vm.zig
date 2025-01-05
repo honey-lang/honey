@@ -610,7 +610,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             // 4. Call function by jumping to it
             self.program_counter = func_metadata.program_offset;
             // 5. Offset frame pointer by the number of locals/args we pushed
-            self.frame_pointer = self.stack.size();
+            self.frame_pointer = self.stack.size() - 1;
         },
         .iterable_begin => {
             var iterable = self.stack.peek() catch {

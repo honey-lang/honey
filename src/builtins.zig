@@ -185,7 +185,7 @@ pub fn to_string(vm: *Vm, args: []const Value) !?Value {
     return try vm.createString(stream.getWritten());
 }
 
-/// Returns the length of a string, list, or dictionary.
+/// Returns the length of a string, list, dictionary, or range.
 pub fn len(_: *Vm, args: []const Value) !?Value {
     if (args.len != 1) {
         return error.InvalidNumberOfArguments;
@@ -195,6 +195,7 @@ pub fn len(_: *Vm, args: []const Value) !?Value {
         .string => |string| .{ .number = @floatFromInt(string.len) },
         .list => |list| .{ .number = @floatFromInt(list.count()) },
         .dict => |dict| .{ .number = @floatFromInt(dict.count()) },
+        .range => |range| .{ .number = @floatFromInt(range.end - range.start) },
         else => error.InvalidArgument,
     };
 }
@@ -221,4 +222,19 @@ pub fn @"type"(vm: *Vm, args: []const Value) !?Value {
     // we don't need to allocate a string at the moment
     // because all type names are embedded into the program
     return Value{ .string = arg.typeName() };
+}
+
+/// Returns the time in milliseconds
+pub fn time_ms(_: *Vm, _: []const Value) !?Value {
+    return .{ .number = @floatFromInt(std.time.milliTimestamp()) };
+}
+
+/// Returns the time in nanoseconds
+pub fn time_ns(_: *Vm, _: []const Value) !?Value {
+    return .{ .number = @floatFromInt(@as(i64, @truncate(std.time.nanoTimestamp()))) };
+}
+
+/// Returns the time in nanoseconds
+pub fn timestamp(_: *Vm, _: []const Value) !?Value {
+    return .{ .number = @floatFromInt(std.time.timestamp()) };
 }

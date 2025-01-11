@@ -1,0 +1,24 @@
+
+
+const OUTER_RANGE = 0..1;
+const INNER_RANGE = 0..2;
+
+@println("While Loop: ");
+{
+    let i = 0;
+    while (i < 5): (i += 1) {
+        let j = 0;
+        while (j < 3): (j += 1) {
+            @println(i, j);
+        }
+    }
+}
+@println("For Loop: ");
+{
+    for (0..5) |i| {
+        for (0..3) |j| {
+            @println(i, j);
+            @dump_stack();
+        }
+    }
+}

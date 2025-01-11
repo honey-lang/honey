@@ -1,18 +1,13 @@
-// fn hello_world(name: string) {
-    // @println("Hello, ", name);
-// }
-
 fn add(first: int, second: int) {
-    // @println(first, " + ", second, " = ", first + second);
-    const result = first + second;
-    // return result;
+    return first + second;
 }
 
-// hello_world("Em");
-// hello_world("World");
+// let result = add(1, 2);
+// @println("Result: ", result);
 
+// @set_stack_logging(true);
+fn scope_test(a: number, b: number) {
+    return if (a > b) [b, a, a + b] else [a, b, a + b];
+}
 
-let test;
-
-test = add(1, 2);
-@println("Result: ", test);
+@println("`scope_test` Result: ", scope_test(4, 2));

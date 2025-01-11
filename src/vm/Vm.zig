@@ -121,6 +121,8 @@ pub const VmOptions = struct {
     dump_bytecode: bool = false,
     /// The writer used for output and debugging
     writer: std.io.AnyWriter,
+    /// If enabled, it will print out changes to the stack as they occur
+    print_stack_state: bool = false,
 };
 
 /// Initializes the VM with the needed values
@@ -597,11 +599,13 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             }
 
             // 3. Create call frame
+            // std.log.info("Top: {d} | Arg Count: {d}", .{ self.stack.top(), arg_count });
             const frame = CallFrame{
                 .return_address = self.program_counter,
                 .frame_pointer = self.frame_pointer,
                 .arg_count = arg_count,
             };
+
             self.call_stack.push(frame) catch |err| {
                 self.reportError("Unable to push call frame onto stack: {any}", .{err});
                 return VmError.OutOfMemory;
@@ -610,7 +614,7 @@ fn execute(self: *Self, instruction: Opcode) VmError!void {
             // 4. Call function by jumping to it
             self.program_counter = func_metadata.program_offset;
             // 5. Offset frame pointer by the number of locals/args we pushed
-            self.frame_pointer = self.stack.size() - 1;
+            self.frame_pointer = self.stack.size() - arg_count;
         },
         .iterable_begin => {
             var iterable = self.stack.peek() catch {
@@ -753,23 +757,27 @@ fn removeActiveIterator(self: *Self) VmError!void {
         self.reportError("Failed to remove active iterator", .{});
         return VmError.StackUnderflow;
     };
-    self.active_iterator_index = if (self.active_iterator_stack.size() > 0) self.active_iterator_stack.size() - 1 else null;
+    self.active_iterator_index = if (!self.active_iterator_stack.empty()) self.active_iterator_stack.top() else null;
 }
 
 /// Sets the active iterator
 fn setActiveIterator(self: *Self, iterator: Value.Iterator) VmError!void {
     self.active_iterator_stack.push(iterator) catch return VmError.OutOfMemory;
-    self.active_iterator_index = self.active_iterator_stack.size() - 1;
+    self.active_iterator_index = self.active_iterator_stack.top();
 }
 
 /// Pushes a value onto the stack or reports and returns an error
 fn pushOrError(self: *Self, value: Value) VmError!void {
-    // std.debug.print("Pushing value onto stack: {s}\n", .{value});
+    if (self.options.print_stack_state) {
+        std.log.info("Pushing value onto stack: {s}", .{value});
+    }
     self.stack.push(value) catch |err| {
         self.reportError("Failed to push value onto stack: {any}", .{err});
         return error.StackOverflow;
     };
-    // self.stack.dump();
+    if (self.options.print_stack_state) {
+        self.stack.dump();
+    }
 }
 
 /// Attempts to get a value from the stack or reports and returns an error
@@ -808,13 +816,7 @@ fn freeValue(self: *Self, value: Value) void {
 }
 
 fn popOrNull(self: *Self) Value {
-    // when last popped becomes the penultimate, we will free the memory since we're holding no more references to it
-    if (self.last_popped) |last_popped| {
-        self.freeValue(last_popped);
-    }
-
-    self.last_popped = self.stack.pop() catch return Value.Null;
-    return self.last_popped.?;
+    return self.popOrError() catch return Value.Null;
 }
 
 /// Pops a value from the stack or reports and returns an error
@@ -824,12 +826,19 @@ fn popOrError(self: *Self) VmError!Value {
         self.freeValue(last_popped);
     }
 
-    // std.debug.print("Popping value from stack: {s}\n", .{self.stack.peek() catch return VmError.StackUnderflow});
+    if (self.options.print_stack_state) {
+        std.log.info("Popping value from stack: {s}", .{self.stack.peek() catch return VmError.StackUnderflow});
+    }
+
     self.last_popped = self.stack.pop() catch {
         self.reportError("Failed to pop value from stack", .{});
         return error.StackUnderflow;
     };
-    // self.stack.dump();
+
+    if (self.options.print_stack_state) {
+        self.stack.dump();
+    }
+
     return self.last_popped.?;
 }
 

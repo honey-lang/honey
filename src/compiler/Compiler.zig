@@ -62,6 +62,12 @@ const Error = error{
     UnexpectedType,
     /// Occurs when the compiler attempts to exit a function that it is not in
     NotInFunction,
+    /// Occurs when the compiler attempts to exit a loop that it is not in
+    NotInLoop,
+    /// Occurs when the compiler attempts to patch a loop with proper offsets but can't
+    LoopPatchFailure,
+    /// Occurs when the compiler runs out of space on the loop stack to store a new loop expression
+    LoopStackOverflow,
 };
 
 const Local = struct {
@@ -75,6 +81,24 @@ const Local = struct {
 
 const ScopeContext = struct {
     const LocalArray = std.BoundedArray(Local, MaxLocalVariables);
+    const Loop = struct {
+        expr: ast.Expression,
+        break_statements: std.ArrayList(CompiledInstruction),
+        continue_statements: std.ArrayList(CompiledInstruction),
+
+        pub fn init(expr: ast.Expression, ally: std.mem.Allocator) Loop {
+            return .{
+                .expr = expr,
+                .break_statements = std.ArrayList(CompiledInstruction).init(ally),
+                .continue_statements = std.ArrayList(CompiledInstruction).init(ally),
+            };
+        }
+
+        pub fn deinit(self: *Loop) void {
+            self.break_statements.deinit();
+            self.continue_statements.deinit();
+        }
+    };
 
     // The number of temporary variables being tracked by the compiler
     temp_variable_count: u16 = 0,
@@ -82,60 +106,69 @@ const ScopeContext = struct {
     local_variables: LocalArray = .{},
     /// The depth of the current scope
     current_depth: u16 = 0,
-    /// The current loop that the compiler is in
-    current_loop: ?ast.Expression = null,
-    /// The current break instructions being tracked for the current loop
-    break_statements: std.ArrayList(CompiledInstruction),
-    /// The current continue instructions being tracked for the current loop
-    continue_statements: std.ArrayList(CompiledInstruction),
+    /// The allocator we use for our local
+    allocator: std.mem.Allocator,
+    loop_stack: utils.BoundedStack(Loop, 1024) = .{},
 
     /// Initializes the scope context
     pub fn init(ally: std.mem.Allocator) ScopeContext {
-        return .{
-            .break_statements = std.ArrayList(CompiledInstruction).init(ally),
-            .continue_statements = std.ArrayList(CompiledInstruction).init(ally),
-        };
+        return .{ .allocator = ally };
     }
 
     /// Deinitializes the scope context
     pub fn deinit(self: *ScopeContext) void {
-        self.break_statements.deinit();
-        self.continue_statements.deinit();
+        if (self.loop_stack.empty()) {
+            return;
+        }
+
+        std.log.warn("Compiler had remaining elements on the loop stack during deinitialization", .{});
+        // Clear out any remaining stack elements
+        while (!self.loop_stack.empty()) {
+            var loop = self.loop_stack.peekPtr() catch unreachable;
+            loop.deinit();
+
+            _ = self.loop_stack.popOrNull();
+        }
+    }
+
+    pub fn currentLoop(self: *ScopeContext) ?Loop {
+        return self.loop_stack.peek() catch null;
     }
 
     /// Begins a new loop
-    pub fn beginLoop(self: *ScopeContext, loop: ast.Expression) void {
-        self.break_statements.clearRetainingCapacity();
-        self.continue_statements.clearRetainingCapacity();
-        self.current_loop = loop;
+    pub fn beginLoop(self: *ScopeContext, expr: ast.Expression) !void {
+        const loop = Loop.init(expr, self.allocator);
+        self.loop_stack.push(loop) catch return error.LoopStackOverflow;
     }
 
     /// Adds a continue statement to the current loop
     pub fn addBreak(self: *ScopeContext, instr: CompiledInstruction) !void {
-        try self.break_statements.append(instr);
+        var current = self.loop_stack.peekPtr() catch return error.NotInLoop;
+        try current.break_statements.append(instr);
     }
 
     /// Adds a continue statement to the current loop
     pub fn addContinue(self: *ScopeContext, instr: CompiledInstruction) !void {
-        try self.continue_statements.append(instr);
+        var current = self.loop_stack.peekPtr() catch return error.NotInLoop;
+        try current.continue_statements.append(instr);
     }
 
     /// Patches all break and continue statements with the correct offsets
     pub fn patchLoop(self: *ScopeContext, compiler: *Self, post_loop_expr: CompiledInstruction, loop_end: CompiledInstruction) !void {
-        for (self.break_statements.items) |instr| {
+        const current = self.loop_stack.peekPtr() catch return error.LoopPatchFailure;
+        for (current.break_statements.items) |instr| {
             try compiler.replace(instr, .{ .jump = @intCast(loop_end.endIndex() - instr.index) });
         }
 
-        for (self.continue_statements.items) |instr| {
+        for (current.continue_statements.items) |instr| {
             try compiler.replace(instr, .{ .jump = @intCast(post_loop_expr.endIndex() - instr.nextInstructionIndex()) });
         }
     }
 
     /// Ends the current loop
-    pub fn endLoop(self: *ScopeContext) void {
-        self.break_statements.clearRetainingCapacity();
-        self.continue_statements.clearRetainingCapacity();
-        self.current_loop = null;
+    pub fn endLoop(self: *ScopeContext) !void {
+        var loop = self.loop_stack.pop() catch return error.NotInLoop;
+        loop.deinit();
     }
 
     // Allocates a temp variable slot by incrementing the count
@@ -313,9 +346,14 @@ fn getCurrentInstructionList(self: *Self) *InstructionList {
         &self.instructions;
 }
 
+/// Returns true if the current scope has allocated locals
+fn hasLocals(self: *Self) bool {
+    return self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth;
+}
+
 /// Cleans the current scope by adding `pop` instructions and removing them from our internal context
 fn cleanScope(self: *Self) Error!void {
-    while (self.scope_context.getLocalsCount() > 0 and self.scope_context.getLastLocal().depth > self.scope_context.current_depth) {
+    while (self.hasLocals()) {
         try self.addInstruction(.pop);
         _ = self.scope_context.popLocal();
     }
@@ -615,8 +653,8 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
                 try self.addInstruction(.null);
             }
 
-            // if we're in a current function, clean it up
-            if (self.current_func != null) {
+            // if we're in a current function, clean it up *only* if it has locals
+            if (self.current_func != null and self.hasLocals()) {
                 const slot = self.scope_context.allocateTemp();
                 try self.addInstruction(.{ .set_temp = slot });
                 try self.cleanScope();
@@ -626,7 +664,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             try self.addInstruction(.@"return");
         },
         .@"break" => {
-            if (self.scope_context.current_loop) |_| {
+            if (self.scope_context.currentLoop()) |_| {
                 try self.addInstruction(.{ .jump = MaxOffset });
                 try self.scope_context.addBreak(try self.getLastInstruction());
             } else {
@@ -635,7 +673,7 @@ fn compileStatement(self: *Self, statement: ast.Statement) Error!void {
             }
         },
         .@"continue" => {
-            if (self.scope_context.current_loop) |_| {
+            if (self.scope_context.currentLoop()) |_| {
                 try self.addInstruction(.{ .jump = MaxOffset });
                 try self.scope_context.addContinue(try self.getLastInstruction());
             } else {
@@ -760,8 +798,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             // the loop should start before the condition
             const loop_start_instr = try self.getLastInstruction();
 
-            self.scope_context.beginLoop(expression);
-            defer self.scope_context.endLoop();
+            try self.scope_context.beginLoop(expression);
 
             try self.compileExpression(inner.condition.*);
 
@@ -787,13 +824,12 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
 
             try self.replace(jif_target, .{ .jump_if_false = end_loop_offset });
             try self.scope_context.patchLoop(self, post_loop_expr, end_loop_instr);
+            try self.scope_context.endLoop();
 
             // todo: only add a void instr if the loop body is empty
             try self.addInstruction(.void);
         },
         .for_expr => |inner| {
-            // self.diagnostics.report("expression {s} is not iterable", .{inner.expr});
-            // return Error.UnsupportedStatement;
             // compile the expression and iterate over it
             var jif_target: CompiledInstruction = undefined;
 
@@ -811,8 +847,7 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             //     false,
             // ) else null;
 
-            self.scope_context.beginLoop(expression);
-            defer self.scope_context.endLoop();
+            try self.scope_context.beginLoop(expression);
 
             try self.addInstruction(.iterable_begin);
 
@@ -844,10 +879,12 @@ fn compileExpression(self: *Self, expression: ast.Expression) Error!void {
             try self.scope_context.removeLocal(capture_value_name);
             // if (capture_key_name) |name| try self.scope_context.removeLocal(name);
             try self.addInstruction(.iterable_end);
-            // todo: only add a void instr if the loop body is empty
-            try self.addInstruction(.void);
+
+            // TODO: Allow breaking w/ values. If there's no break, we emit a void (maybe null?) value
+            // try self.addInstruction(.void);
 
             try self.scope_context.patchLoop(self, post_loop_expr, loop_target);
+            try self.scope_context.endLoop();
             try self.replace(jif_target, .{ .jump_if_false = @intCast(loop_target.index - jif_target.index) });
             try self.replace(loop_target, .{ .loop = @intCast(loop_target.nextInstructionIndex() - loop_start_instr.nextInstructionIndex()) });
         },

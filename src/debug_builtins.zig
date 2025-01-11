@@ -13,6 +13,20 @@ pub fn dump_stack(vm: *Vm, args: []const Value) !?Value {
     return null;
 }
 
+/// Sets the VM's stack logging state
+pub fn set_stack_logging(vm: *Vm, args: []const Value) !?Value {
+    if (args.len != 1) {
+        return error.InvalidNumberOfArguments;
+    }
+    const value: bool = if (args[0] == .boolean)
+        args[0].boolean
+    else
+        return error.UnexpectedType;
+
+    vm.options.print_stack_state = value;
+    return null;
+}
+
 /// Dumps information about a variadic number of arguments to stderr
 pub fn dump_var(vm: *Vm, args: []const Value) !?Value {
     if (args.len == 0) {

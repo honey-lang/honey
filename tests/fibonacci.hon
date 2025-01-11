@@ -1,11 +1,24 @@
 
 // Recursively calculates the fibonacci sequence
-fn fibonacci(n: number) {
-    if (n == 0 or n == 1) {
-        return 1;
+fn fibonacci_bugged(n: number) {
+    if (n <= 1) {
+        return n;
     }
-    return fibonacci(n) + fibonacci(n - 1);
+    return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-const N = 5;
-@println("Fibonacci(", N, ") = ", fibonacci(N));
+fn fibonacci(n: number) {
+    return if (n <= 1) n else (fibonacci(n - 1) + fibonacci(n - 2));
+}
+
+
+const start = @time_ms();
+let results = [];
+for (0..30) |n| {
+    results[n] = fibonacci(n);
+}
+
+@println("Results: ", @join(results, ", "));
+const end = @time_ms();
+
+@println("fibonacci(30) = ", @time_ms() - start, " ms");

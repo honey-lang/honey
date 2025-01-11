@@ -8,6 +8,7 @@ pub const Span = cursor.Span;
 pub const Diagnostics = @import("Diagnostics.zig");
 pub const Repl = @import("Repl.zig");
 pub const Stack = @import("stack.zig").Stack;
+pub const BoundedStack = @import("stack.zig").BoundedStack;
 pub const Store = @import("store.zig").Store;
 pub const Terminal = @import("Terminal.zig");
 

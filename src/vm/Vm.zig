@@ -13,7 +13,7 @@ const Value = @import("../compiler/value.zig").Value;
 
 const Self = @This();
 /// The built-in functions for the VM
-const BuiltinLibrary = if (@import("builtin").target.isWasm())
+const BuiltinLibrary = if (@import("builtin").target.cpu.arch.isWasm())
     @import("../wasm_builtins.zig")
 else
     @import("../builtins.zig");
@@ -213,27 +213,27 @@ pub fn createString(self: *Self, value: []const u8) !Value {
 /// Adds all public functions from the import as a built-in library
 /// All built-ins are represented as a top-level call (e.g., `pub fn print` turns into `@print`)
 pub fn addBuiltinLibrary(self: *Self, comptime import: type) VmError!void {
-    const decls = @typeInfo(import).Struct.decls;
+    const decls = @typeInfo(import).@"struct".decls;
     inline for (decls) |decl| {
         const DeclType = @TypeOf(@field(import, decl.name));
         const decl_type_info = @typeInfo(DeclType);
         const field = @field(import, decl.name);
-        if (decl_type_info == .Fn) {
+        if (decl_type_info == .@"fn") {
             // validate that the declaration is a function
             // todo: we can use this for mapping native functions to a call in the VM
             // to do so, we'll inspect the params of the function and generate a new function that takes a slice of values,
             // maps them to the correct types, and then calls the native function
-            // e.g., pub fn print(data: []const u8) will turn into a function with the parameters (vm: *Vm, args: []const Value)
+            // e.g., pub fn print() will turn into a function with the parameters (vm: *Vm, args: []const Value)
             self.builtins.put(decl.name, @field(import, decl.name)) catch return VmError.OutOfMemory;
             continue;
         }
         const value: Value = switch (decl_type_info) {
-            .Int, .ComptimeInt => .{ .number = @as(f64, @floatFromInt(field)) },
-            .Float, .ComptimeFloat => .{ .number = field },
-            .Bool => .{ .boolean = field },
+            .int, .comptime_int => .{ .number = @as(f64, @floatFromInt(field)) },
+            .float, .comptime_float => .{ .number = field },
+            .bool => .{ .boolean = field },
             // if we encounter a string slice, add it to our declared list
-            .Pointer => |inner| if (inner.size == .One) .{ .string = field } else continue,
-            .Null => .null,
+            .pointer => |inner| if (inner.size == .one) .{ .string = field } else continue,
+            .null => .null,
             // not a value we can convert into our internal representation
             inline else => continue,
         };
@@ -722,8 +722,8 @@ inline fn fetchNumber(self: *Self, comptime T: type) VmError!T {
     }
     const bytes = try self.fetchAmount(@sizeOf(T));
     return switch (@typeInfo(T)) {
-        .Int => std.mem.readInt(T, bytes[0..@sizeOf(T)], .big),
-        .Float => utils.bytes.bytesToFloat(T, bytes, .big),
+        .int => std.mem.readInt(T, bytes[0..@sizeOf(T)], .big),
+        .float => utils.bytes.bytesToFloat(T, bytes, .big),
         inline else => @compileError("Invalid type"),
     };
 }

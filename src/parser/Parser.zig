@@ -149,8 +149,8 @@ pub fn report(self: *Self) void {
 
 /// Attempts to match a token to the line that it exists on
 pub fn findLineIndex(self: *Self, token_data: TokenData) ?usize {
-    return std.sort.binarySearch(utils.Span, token_data.position, self.line_data, {}, struct {
-        pub fn find(_: void, key: utils.Span, mid_item: utils.Span) std.math.Order {
+    return std.sort.binarySearch(utils.Span, self.line_data, token_data.position, struct {
+        pub fn find(key: utils.Span, mid_item: utils.Span) std.math.Order {
             if (key.start >= mid_item.start and key.end <= mid_item.end) {
                 return .eq;
             } else if (key.end < mid_item.start) {

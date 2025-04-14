@@ -194,7 +194,7 @@ const ScopeContext = struct {
 
     /// Returns the last local variable in the current scope or null if there are no local variables
     inline fn popLocal(self: *ScopeContext) ?Local {
-        return self.local_variables.popOrNull();
+        return self.local_variables.pop();
     }
 
     /// Returns a local variable by offset or errors if the index is out of bounds
@@ -240,14 +240,14 @@ const ScopeContext = struct {
             .depth = self.current_depth,
             .is_const = is_const,
         }) catch return Error.OutOfMemory;
-        return self.local_variables.len - 1;
+        return @intCast(self.local_variables.len - 1);
     }
 
     /// Attempts to find a local variable by name. If found, it removes it from the list of local variables
     fn removeLocal(self: *ScopeContext, name: []const u8) Error!void {
         for (self.getLocals()) |local| {
             if (std.mem.eql(u8, local.name, name)) {
-                _ = self.local_variables.popOrNull() orelse return Error.LocalOutOfBounds;
+                _ = self.local_variables.pop() orelse return Error.LocalOutOfBounds;
                 return;
             }
         }

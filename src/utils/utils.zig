@@ -56,9 +56,9 @@ fn MergeTuples(comptime T: type) type {
 }
 
 fn structField(comptime name: [:0]const u8, comptime T: type) std.builtin.Type.StructField {
-    return .{ .name = name, .type = T, .default_value = null, .is_comptime = false, .alignment = @alignOf(T) };
+    return .{ .name = name, .type = T, .default_value_ptr = null, .is_comptime = false, .alignment = @alignOf(T) };
 }
 
 fn Struct(comptime fields: []const std.builtin.Type.StructField) type {
-    return @Type(.{ .Struct = .{ .layout = .auto, .fields = fields, .decls = &.{}, .is_tuple = false } });
+    return @Type(.{ .@"struct" = .{ .layout = .auto, .fields = fields, .decls = &.{}, .is_tuple = false } });
 }

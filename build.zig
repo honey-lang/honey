@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     // create exports for the wasm target
-    if (target.result.isWasm()) {
+    if (target.result.cpu.arch.isWasm()) {
         const exe = b.addExecutable(.{
             .name = "honey",
             .root_source_file = b.path("src/wasm.zig"),

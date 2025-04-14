@@ -66,11 +66,22 @@ pub fn main() !void {
         if (res.args.input) |input| {
             break :blk .{ .string = input };
         } else if (res.positionals.len > 0) {
-            const handle = try std.fs.cwd().openFile(res.positionals[0], .{});
+            const path = res.positionals[0] orelse {
+                // show help & exit
+                try stdout.print(Header ++ Options, .{honey.version});
+                return;
+            };
+            const handle = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+                error.FileNotFound => {
+                    std.log.err("Unable to locate file at path \"{s}\"", .{path});
+                    return;
+                },
+                else => return err,
+            };
 
             // 1024 chars should be enough for a path for now
             var path_buf: [1024]u8 = undefined;
-            const full_path = try std.fs.cwd().realpath(res.positionals[0], &path_buf);
+            const full_path = try std.fs.cwd().realpath(path, &path_buf);
             const file_name = std.fs.path.basename(full_path);
             break :blk .{ .file = .{ .name = file_name, .handle = handle } };
         } else {
@@ -144,10 +155,10 @@ fn zlsAnalyze(comptime T: type) void {
 /// Returns all declarations of a type
 fn declarations(comptime T: type) []const std.builtin.Type.Declaration {
     return switch (@typeInfo(T)) {
-        .Struct => |info| info.decls,
-        .Enum => |info| info.decls,
-        .Union => |info| info.decls,
-        .Opaque => |info| info.decls,
+        .@"struct" => |info| info.decls,
+        .@"enum" => |info| info.decls,
+        .@"union" => |info| info.decls,
+        .@"opaque" => |info| info.decls,
         else => &.{},
     };
 }

@@ -98,15 +98,12 @@ pub fn Stack(comptime T: type) type {
 
         /// Pops a value off the stack or returns an error if the stack is empty.
         pub fn pop(self: *Self) Error!T {
-            if (self.data.items.len == 0) {
-                return error.StackEmpty;
-            }
-            return self.data.pop();
+            return self.data.pop() orelse error.StackEmpty;
         }
 
         /// Pops and returns the top value of the stack or null if the stack is empty.
         pub fn popOrNull(self: *Self) ?T {
-            return self.data.popOrNull();
+            return self.data.pop();
         }
     };
 }
@@ -200,15 +197,12 @@ pub fn BoundedStack(comptime T: type, comptime capacity: comptime_int) type {
 
         /// Pops a value off the stack or returns an error if the stack is empty.
         pub fn pop(self: *Self) Error!T {
-            if (self.data.len == 0) {
-                return error.StackEmpty;
-            }
-            return self.data.pop();
+            return self.data.pop() orelse error.StackEmpty;
         }
 
         /// Pops and returns the top value of the stack or null if the stack is empty.
         pub fn popOrNull(self: *Self) ?T {
-            return self.data.popOrNull();
+            return self.data.pop();
         }
     };
 }

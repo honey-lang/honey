@@ -206,18 +206,18 @@ pub fn encode(value: anytype, writer: anytype) !void {
     const value_type_info = @typeInfo(ValueType);
 
     switch (value_type_info) {
-        .Bool => try writer.writeInt(u8, if (value) 1 else 0, .big),
-        .Int => try writer.writeInt(ValueType, value, .big),
-        .Float => {
+        .bool => try writer.writeInt(u8, if (value) 1 else 0, .big),
+        .int => try writer.writeInt(ValueType, value, .big),
+        .float => {
             const value_bytes = @as([@sizeOf(value)]u8, @bitCast(value));
             try writer.writeAll(&value_bytes);
         },
-        .Struct => |inner| {
+        .@"struct" => |inner| {
             inline for (inner.fields) |field| {
                 try encode(@field(value, field.name), writer);
             }
         },
-        .Void => {},
+        .void => {},
         inline else => @panic("Unsupported type: " ++ @typeName(ValueType)),
     }
 }

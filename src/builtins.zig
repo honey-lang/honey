@@ -45,7 +45,7 @@ pub fn join(vm: *Vm, args: []const Value) !?Value {
 }
 
 pub fn rand(_: *Vm, args: []const Value) !?Value {
-    var prng = std.rand.Xoshiro256.init(if (builtin.target.isWasm()) wasm: {
+    var prng = std.Random.Xoshiro256.init(if (builtin.target.cpu.arch.isWasm()) wasm: {
         const seed = wasm.generateSeed();
         break :wasm seed;
     } else posix: {
@@ -79,7 +79,7 @@ pub fn rand(_: *Vm, args: []const Value) !?Value {
     };
 }
 pub fn print(_: *Vm, args: []const Value) !?Value {
-    var under_writer = if (builtin.target.isWasm()) blk: {
+    var under_writer = if (builtin.target.cpu.arch.isWasm()) blk: {
         break :blk wasm.LogWriter{};
     } else blk: {
         break :blk std.io.getStdErr().writer();
@@ -97,7 +97,7 @@ pub fn print(_: *Vm, args: []const Value) !?Value {
 }
 
 pub fn println(_: *Vm, args: []const Value) !?Value {
-    var under_writer = if (builtin.target.isWasm()) blk: {
+    var under_writer = if (builtin.target.cpu.arch.isWasm()) blk: {
         break :blk wasm.LogWriter{};
     } else blk: {
         break :blk std.io.getStdErr().writer();
@@ -134,7 +134,7 @@ pub fn prompt(vm: *Vm, args: []const Value) !?Value {
     }
     const msg = args[0].string;
 
-    if (!builtin.target.isWasm()) {
+    if (!builtin.target.cpu.arch.isWasm()) {
         const stderr = std.io.getStdErr().writer();
         stderr.print("{s}", .{msg}) catch return error.PrintFailed;
 
